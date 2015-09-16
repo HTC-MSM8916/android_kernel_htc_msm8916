@@ -100,29 +100,36 @@ void arm_machine_flush_console(void)
 }
 #endif
 
+/*
+ * A temporary stack to use for CPU reset. This is static so that we
+ * don't clobber it with the identity mapping. When running with this
+ * stack, any references to the current task *will not work* so you
+ * should really do as little as possible before jumping to your reset
+ * code.
+ */
 static u64 soft_restart_stack[16];
 
 static void __soft_restart(void *addr)
 {
 	phys_reset_t phys_reset;
 
-	
+	/* Take out a flat memory mapping. */
 	setup_mm_for_reboot();
 
-	
+	/* Clean and invalidate caches */
 	flush_cache_all();
 
-	
+	/* Turn off caching */
 	cpu_proc_fin();
 
-	
+	/* Push out any further dirty data, and ensure cache is empty */
 	flush_cache_all();
 
-	
+	/* Switch to the identity mapping. */
 	phys_reset = (phys_reset_t)(unsigned long)virt_to_phys(cpu_reset);
 	phys_reset((unsigned long)addr);
 
-	
+	/* Should never get here. */
 	BUG();
 }
 
@@ -130,18 +137,18 @@ void soft_restart(unsigned long addr)
 {
 	u64 *stack = soft_restart_stack + ARRAY_SIZE(soft_restart_stack);
 
-	
+	/* Disable interrupts first */
 	local_irq_disable();
 	local_fiq_disable();
 
-	
+	/* Disable the L2 if we're the last man standing. */
 	if (num_online_cpus() == 1)
 		outer_disable();
 
-	
+	/* Change to the new stack and continue with the reset. */
 	call_with_stack(__soft_restart, (void *)addr, (void *)stack);
 
-	
+	/* Should never get here. */
 	BUG();
 }
 
@@ -149,12 +156,18 @@ static void null_restart(enum reboot_mode reboot_mode, const char *cmd)
 {
 }
 
+/*
+ * Function pointers to optional machine specific functions
+ */
 void (*pm_power_off)(void);
 EXPORT_SYMBOL(pm_power_off);
 
 void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd) = null_restart;
 EXPORT_SYMBOL_GPL(arm_pm_restart);
 
+/*
+ * This is our default idle handler.
+ */
 
 extern void arch_idle(void);
 void (*arm_pm_idle)(void) = arch_idle;
@@ -195,6 +208,9 @@ void arch_cpu_idle_dead(void)
 }
 #endif
 
+/*
+ * Called from the core idle loop.
+ */
 void arch_cpu_idle(void)
 {
 	if (cpuidle_idle_call())
@@ -211,14 +227,35 @@ static int __init reboot_setup(char *str)
 }
 __setup("reboot=", reboot_setup);
 
+/*
+ * Called by kexec, immediately prior to machine_kexec().
+ *
+ * This must completely disable all secondary CPUs; simply causing those CPUs
+ * to execute e.g. a RAM-based pin loop is not sufficient. This allows the
+ * kexec'd kernel to use any and all RAM as it sees fit, without having to
+ * avoid any code or data used by any SW CPU pin loop. The CPU hotplug
+ * functionality embodied in disable_nonboot_cpus() to achieve this.
+ */
 void machine_shutdown(void)
 {
 #ifdef CONFIG_SMP
+	/*
+	 * Disable preemption so we're guaranteed to
+	 * run to power off or reboot and prevent
+	 * the possibility of switching to another
+	 * thread that might wind up blocking on
+	 * one of the stopped CPUs.
+	 */
 	preempt_disable();
 #endif
 	disable_nonboot_cpus();
 }
 
+/*
+ * Halting simply requires that the secondary CPUs stop performing any
+ * activity (executing tasks, handling interrupts). smp_send_stop()
+ * achieves this.
+ */
 void machine_halt(void)
 {
 	preempt_disable();
@@ -228,6 +265,12 @@ void machine_halt(void)
 	while (1);
 }
 
+/*
+ * Power-off simply requires that the secondary CPUs stop performing any
+ * activity (executing tasks, handling interrupts). smp_send_stop()
+ * achieves this. When the system power is turned off, it will take all CPUs
+ * with it.
+ */
 void machine_power_off(void)
 {
 	preempt_disable();
@@ -237,6 +280,17 @@ void machine_power_off(void)
 		pm_power_off();
 }
 
+/*
+ * Restart requires that the secondary CPUs stop performing any activity
+ * while the primary CPU resets the system. Systems with a single CPU can
+ * use soft_restart() as their machine descriptor's .restart hook, since that
+ * will cause the only available CPU to reset. Systems with multiple CPUs must
+ * provide a HW restart implementation, to ensure that all CPUs reset at once.
+ * This is required so that any code running after reset on the primary CPU
+ * doesn't have to co-ordinate with other CPUs to ensure they aren't still
+ * executing pre-reset code, and using RAM that the primary CPU's code wishes
+ * to use. Implementing such co-ordination would be essentially impossible.
+ */
 void machine_restart(char *cmd)
 {
 	extern char *saved_command_line;
@@ -244,39 +298,60 @@ void machine_restart(char *cmd)
 	smp_send_stop();
 
 	pr_emerg("Kernel command line: %s\n", saved_command_line);
+	/* Flush the console to make sure all the relevant messages make it
+	 * out to the console drivers */
 	arm_machine_flush_console();
 
 	arm_pm_restart(reboot_mode, cmd);
 
-	
+	/* Give a grace period for failure to restart of 1s */
 	mdelay(1000);
 
-	
+	/* Whoops - the platform was unable to reboot. Tell the user! */
 	printk("Reboot failed -- System halted\n");
 	local_irq_disable();
 	while (1);
 }
 
+/*
+ * dump a block of kernel memory from around the given address
+ */
 static void show_data(unsigned long addr, int nbytes, const char *name)
 {
 	int	i, j;
 	int	nlines;
 	u32	*p;
 
+	/*
+	 * don't attempt to dump non-kernel addresses or
+	 * values that are probably just small negative numbers
+	 */
 	if (addr < PAGE_OFFSET || addr > -256UL)
 		return;
 
 	printk("\n%s: %#lx:\n", name, addr);
 
+	/*
+	 * round address down to a 32 bit boundary
+	 * and always dump a multiple of 32 bytes
+	 */
 	p = (u32 *)(addr & ~(sizeof(u32) - 1));
 	nbytes += (addr & (sizeof(u32) - 1));
 	nlines = (nbytes + 31) / 32;
 
 
 	for (i = 0; i < nlines; i++) {
+		/*
+		 * just display low 16 bits of address to keep
+		 * each line of the dump < 80 characters
+		 */
 		printk("%04lx ", (unsigned long)p & 0xffff);
 		for (j = 0; j < 8; j++) {
 			u32	data;
+			/*
+			 * vmalloc addresses may point to
+			 * memory-mapped peripherals
+			 */
 			if (is_vmalloc_addr(p) ||
 			    probe_kernel_address(p, data)) {
 				printk(" ********");
@@ -385,6 +460,9 @@ ATOMIC_NOTIFIER_HEAD(thread_notify_head);
 
 EXPORT_SYMBOL_GPL(thread_notify_head);
 
+/*
+ * Free current thread data structures etc..
+ */
 void exit_thread(void)
 {
 	thread_notify(THREAD_NOTIFY_EXIT, current_thread_info());
@@ -444,12 +522,18 @@ copy_thread(unsigned long clone_flags, unsigned long stack_start,
 	return 0;
 }
 
+/*
+ * Fill in the task's elfregs structure for a core dump.
+ */
 int dump_task_regs(struct task_struct *t, elf_gregset_t *elfregs)
 {
 	elf_core_copy_regs(elfregs, task_pt_regs(t));
 	return 1;
 }
 
+/*
+ * fill in the fpe structure for a core dump...
+ */
 int dump_fpu (struct pt_regs *regs, struct user_fp *fp)
 {
 	struct thread_info *thread = current_thread_info();
@@ -472,7 +556,7 @@ unsigned long get_wchan(struct task_struct *p)
 
 	frame.fp = thread_saved_fp(p);
 	frame.sp = thread_saved_sp(p);
-	frame.lr = 0;			
+	frame.lr = 0;			/* recovered from the stack */
 	frame.pc = thread_saved_pc(p);
 	stack_page = (unsigned long)task_stack_page(p);
 	do {
@@ -494,6 +578,11 @@ unsigned long arch_randomize_brk(struct mm_struct *mm)
 
 #ifdef CONFIG_MMU
 #ifdef CONFIG_KUSER_HELPERS
+/*
+ * The vectors page is always readable from user space for the
+ * atomic helpers. Insert it into the gate_vma so that it is visible
+ * through ptrace and /proc/<pid>/mem.
+ */
 static struct vm_area_struct gate_vma = {
 	.vm_start	= 0xffff0000,
 	.vm_end		= 0xffff0000 + PAGE_SIZE,

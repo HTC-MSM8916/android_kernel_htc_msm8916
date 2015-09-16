@@ -141,6 +141,9 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	unsigned long zram_alloc_pages;
 	long zram_save_pages;
 
+/*
+ * display in kilobytes.
+ */
 #define K(x) ((x) << (PAGE_SHIFT - 10))
 	si_meminfo(&i);
 	si_swapinfo(&i);
@@ -163,7 +166,9 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 
 	if (zram_save_pages < 0)
 		 zram_save_pages = 0;
-
+	/*
+	 * Tagged format, for easy grepping and expansion.
+	 */
 	seq_printf(m,
 		"MemTotal:       %8lu kB\n"
 		"MemFree:        %8lu kB\n"

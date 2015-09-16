@@ -645,6 +645,10 @@ static void handle_event_change(enum command_response cmd, void *data)
 					return;
 				}
 
+				/*
+				* Get the buffer_info entry for the
+				* device address.
+				*/
 				binfo = device_to_uvaddr(inst,
 					&inst->registered_bufs,
 					event_notify->packet_buffer);
@@ -655,7 +659,7 @@ static void handle_event_change(enum command_response cmd, void *data)
 					return;
 				}
 
-				
+				/* Fill event data to be sent to client*/
 				buf_event.type =
 					V4L2_EVENT_RELEASE_BUFFER_REFERENCE;
 				ptr = (u32 *)buf_event.u.data;
@@ -667,15 +671,19 @@ static void handle_event_change(enum command_response cmd, void *data)
 					ptr[0], ptr[1]);
 
 				mutex_lock(&inst->sync_lock);
-				
+				/* Decrement buffer reference count*/
 				buf_ref_put(inst, binfo);
 
+				/*
+				* Release buffer and remove from list
+				* if reference goes to zero.
+				*/
 				if (unmap_and_deregister_buf(inst, binfo))
 					dprintk(VIDC_ERR,
 					"%s: buffer unmap failed\n", __func__);
 				mutex_unlock(&inst->sync_lock);
 
-				
+				/*send event to client*/
 				v4l2_event_queue_fh(&inst->event_handler,
 					&buf_event);
 				wake_up(&inst->kernel_event_queue);
@@ -1165,6 +1173,14 @@ int buf_ref_put(struct msm_vidc_inst *inst, struct buffer_info *binfo)
 		return rc;
 
 	if (release_buf) {
+		/*
+		* We can not delete binfo here as we need to set the user
+		* virtual address saved in binfo->uvaddr to the dequeued v4l2
+		* buffer.
+		*
+		* We will set the pending_deletion flag to true here and delete
+		* binfo from registered list in dqbuf after setting the uvaddr.
+		*/
 		dprintk(VIDC_DBG, "fd[0] = %d -> pending_deletion = true\n",
 			binfo->fd[0]);
 		binfo->pending_deletion = true;
@@ -1181,6 +1197,10 @@ static void handle_dynamic_buffer(struct msm_vidc_inst *inst,
 {
 	struct buffer_info *binfo = NULL;
 
+	/*
+	 * Update reference count and release OR queue back the buffer,
+	 * only when firmware is not holding a reference.
+	 */
 	if (inst->buffer_mode_set[CAPTURE_PORT] == HAL_BUFFER_MODE_DYNAMIC) {
 		binfo = device_to_uvaddr(inst, &inst->registered_bufs,
 				device_addr);
@@ -1351,7 +1371,7 @@ static void handle_fbd(enum command_response cmd, void *data)
 			break;
 		case HAL_FRAME_NOTCODED:
 		case HAL_UNUSED_PICT:
-			
+			/* Do we need to care about these? */
 		case HAL_FRAME_YUV:
 			break;
 		default:
@@ -3100,6 +3120,26 @@ void msm_comm_flush_dynamic_buffers(struct msm_vidc_inst *inst)
 	if (inst->buffer_mode_set[CAPTURE_PORT] != HAL_BUFFER_MODE_DYNAMIC)
 		return;
 
+	/*
+	* dynamic buffer mode:- if flush is called during seek
+	* driver should not queue any new buffer it has been holding.
+	*
+	* Each dynamic o/p buffer can have one of following ref_count:
+	* ref_count : 0 - f/w has released reference and sent fbd back.
+	*		  The buffer has been returned back to client.
+	*
+	* ref_count : 1 - f/w is holding reference. f/w may have released
+	*                 fbd as read_only OR fbd is pending. f/w will
+	*		  release reference before sending flush_done.
+	*
+	* ref_count : 2 - f/w is holding reference, f/w has released fbd as
+	*                 read_only, which client has queued back to driver.
+	*                 driver holds this buffer and will queue back
+	*                 only when f/w releases the reference. During
+	*		  flush_done, f/w will release the reference but driver
+	*		  should not queue back the buffer to f/w.
+	*		  Flush all buffers with ref_count 2.
+	*/
 	mutex_lock(&inst->lock);
 	if (!list_empty(&inst->registered_bufs)) {
 		struct v4l2_event buf_event = {0};
@@ -3122,7 +3162,7 @@ void msm_comm_flush_dynamic_buffers(struct msm_vidc_inst *inst)
 				dprintk(VIDC_DBG,
 					"released buffer held in driver before issuing flush: 0x%pa fd[0]: %d\n",
 					&binfo->device_addr[0], binfo->fd[0]);
-				
+				/*send event to client*/
 				v4l2_event_queue_fh(&inst->event_handler,
 					&buf_event);
 				wake_up(&inst->kernel_event_queue);
@@ -3181,6 +3221,10 @@ int msm_comm_flush(struct msm_vidc_inst *inst, u32 flags)
 	mutex_lock(&inst->sync_lock);
 	if (inst->in_reconfig && !ip_flush && op_flush) {
 		if (!list_empty(&inst->pendingq)) {
+			/*Execution can never reach here since port reconfig
+			 * wont happen unless pendingq is emptied out
+			 * (both pendingq and flush being secured with same
+			 * lock). Printing a message here incase this breaks.*/
 			dprintk(VIDC_WARN,
 			"FLUSH BUG: Pending q not empty! It should be empty\n");
 		}
@@ -3193,6 +3237,8 @@ int msm_comm_flush(struct msm_vidc_inst *inst, u32 flags)
 
 	} else {
 		if (!list_empty(&inst->pendingq)) {
+			/*If flush is called after queueing buffers but before
+			 * streamon driver should flush the pending queue*/
 			list_for_each_safe(ptr, next, &inst->pendingq) {
 				temp =
 				list_entry(ptr, struct vb2_buf_entry, list);
@@ -3210,7 +3256,7 @@ int msm_comm_flush(struct msm_vidc_inst *inst, u32 flags)
 			}
 		}
 
-		
+		/*Do not send flush in case of session_error */
 		if (!(inst->state == MSM_VIDC_CORE_INVALID &&
 			  core->state != VIDC_CORE_INVALID))
 			rc = call_hfi_op(hdev, session_flush, inst->session,
@@ -3326,6 +3372,13 @@ int msm_comm_get_domain_partition(struct msm_vidc_inst *inst, u32 flags,
 
 	hdev = inst->core->device;
 
+	/*
+	 * TODO: Due to the way in which the underlying smem mechanism
+	 * maps buffer types to corresponding IOMMU domains, we need to
+	 * pass in HAL_BUFFER_OUTPUT for input buffers (and vice versa)
+	 * so that buffers are mapped into the correct domains. In the
+	 * future, we should try to remove this workaround.
+	 */
 	switch (buf_type) {
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
 		hal_buffer_type = (inst->session_type == MSM_VIDC_ENCODER) ?
@@ -3544,10 +3597,15 @@ int msm_comm_kill_session(struct msm_vidc_inst *inst)
 		dprintk(VIDC_ERR, "%s: invalid input parameters\n", __func__);
 		return -EINVAL;
 	} else if (!inst->session) {
-		
+		/* There's no hfi session to kill */
 		return 0;
 	}
 
+	/*
+	 * We're internally forcibly killing the session, if fw is aware of
+	 * the session send session_abort to firmware to clean up and release
+	 * the session, else just kill the session inside the driver.
+	 */
 	if (inst->state >= MSM_VIDC_OPEN_DONE &&
 			inst->state < MSM_VIDC_CLOSE_DONE) {
 		struct hfi_device *hdev = inst->core->device;

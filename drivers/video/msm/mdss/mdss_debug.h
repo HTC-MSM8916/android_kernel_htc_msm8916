@@ -102,4 +102,4 @@ static inline void mdss_dump_reg(char __iomem *base, int len) { }
 static inline void mdss_dsi_debug_check_te(struct mdss_panel_data *pdata) { }
 static inline void mdss_xlog_tout_handler(const char *name, ...) { }
 #endif
-#endif 
+#endif /* MDSS_DEBUG_H */

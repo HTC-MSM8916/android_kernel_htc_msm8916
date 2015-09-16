@@ -21,12 +21,20 @@
 
 #define LCDC_INTERNAL_BUFFER_SIZE   30
 
+/**
+   Macros for coding MIPI commands
+*/
 #define INV_SIZE             0xFFFF
+/* Size of argument to MIPI command is variable */
 #define OP_SIZE_PAIR(op, size)    ((op<<16) | size)
+/* MIPI {command, argument size} tuple */
 #define LCDC_EXTRACT_OP_SIZE(op_identifier)    ((op_identifier&0xFFFF))
+/* extract size from command identifier */
 #define LCDC_EXTRACT_OP_CMD(op_identifier)    (((op_identifier>>16)&0xFFFF))
+/* extract command id from command identifier */
 
 
+/* MIPI standard efinitions */
 #define LCDC_ADDRESS_MODE_ORDER_BOTTOM_TO_TOP                0x80
 #define LCDC_ADDRESS_MODE_ORDER_RIGHT_TO_LEFT                0x40
 #define LCDC_ADDRESS_MODE_ORDER_REVERSE                      0x20
@@ -56,6 +64,9 @@
 #define LCDC_DISPLAY_MODE_INVERSION_ON       0x20
 #define LCDC_DISPLAY_MODE_GAMMA_MASK         0x07
 
+/**
+ * LDCc MIPI Type B supported commands
+ */
 enum {
 	OP_ENTER_IDLE_MODE        = OP_SIZE_PAIR(0x39, 0),
 	OP_ENTER_INVERT_MODE      = OP_SIZE_PAIR(0x21, 0),
@@ -112,4 +123,4 @@ u32 qpic_send_panel_cmd(u32 cmd, u32 *val, u32 length);
 int ili9341_on(struct qpic_panel_io_desc *qpic_panel_io);
 void ili9341_off(struct qpic_panel_io_desc *qpic_panel_io);
 
-#endif 
+#endif /* MDSS_QPIC_PANEL_H */

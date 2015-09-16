@@ -43,6 +43,10 @@ static u64 __read_mostly sched_clock_mask;
 
 static u64 notrace jiffy_sched_clock_read(void)
 {
+	/*
+	 * We don't need to use get_jiffies_64 on 32-bit arches here
+	 * because we register with BITS_PER_LONG
+	 */
 	return (u64)(jiffies - INITIAL_JIFFIES);
 }
 
@@ -81,6 +85,9 @@ static unsigned long long notrace sched_clock_32(void)
 	return epoch_ns + cyc_to_ns(cyc, cd.mult, cd.shift);
 }
 
+/*
+ * Atomically update the sched_clock epoch.
+ */
 static void notrace update_sched_clock(void)
 {
 	unsigned long flags;
@@ -122,7 +129,7 @@ void __init sched_clock_register(u64 (*read)(void), int bits,
 	sched_clock_mask = CLOCKSOURCE_MASK(bits);
 	cd.rate = rate;
 
-	
+	/* calculate the mult/shift to convert counter ticks to ns. */
 	clocks_calc_mult_shift(&cd.mult, &cd.shift, rate, NSEC_PER_SEC, 3600);
 
 	r = rate;
@@ -135,20 +142,23 @@ void __init sched_clock_register(u64 (*read)(void), int bits,
 	} else
 		r_unit = ' ';
 
-	
+	/* calculate how many ns until we wrap */
 	wrap = clocks_calc_max_nsecs(cd.mult, cd.shift, 0, sched_clock_mask);
 	cd.wrap_kt = ns_to_ktime(wrap - (wrap >> 3));
 
-	
+	/* calculate the ns resolution of this counter */
 	res = cyc_to_ns(1ULL, cd.mult, cd.shift);
 	pr_info("sched_clock: %u bits at %lu%cHz, resolution %lluns, wraps every %lluns\n",
 		bits, r, r_unit, res, wrap);
 
 	update_sched_clock();
 
+	/*
+	 * Ensure that sched_clock() starts off at 0ns
+	 */
 	cd.epoch_ns = 0;
 
-	
+	/* Enable IRQ time accounting if we have a fast enough sched_clock */
 	if (irqtime > 0 || (irqtime == -1 && rate >= 1000000))
 		enable_sched_clock_irqtime();
 
@@ -170,11 +180,19 @@ unsigned long long notrace sched_clock(void)
 
 void __init sched_clock_postinit(void)
 {
+	/*
+	 * If no sched_clock function has been provided at that point,
+	 * make it the final one one.
+	 */
 	if (read_sched_clock == jiffy_sched_clock_read)
 		sched_clock_register(jiffy_sched_clock_read, BITS_PER_LONG, HZ);
 
 	update_sched_clock();
 
+	/*
+	 * Start the timer to keep sched_clock() properly updated and
+	 * sets the initial epoch.
+	 */
 	hrtimer_init(&sched_clock_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	sched_clock_timer.function = sched_clock_poll;
 	hrtimer_start(&sched_clock_timer, cd.wrap_kt, HRTIMER_MODE_REL);

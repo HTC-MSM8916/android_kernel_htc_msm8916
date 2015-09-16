@@ -109,7 +109,6 @@ static struct msm_sensor_power_setting gc0339_power_down_setting [] = {
     },
 };
 
-
 static struct v4l2_subdev_info gc0339_subdev_info[] = {
 	{
 		.code   = V4L2_MBUS_FMT_SBGGR10_1X10,
@@ -118,6 +117,7 @@ static struct v4l2_subdev_info gc0339_subdev_info[] = {
 		.order    = 0,
 	},
 };
+
 static int32_t msm_gc0339_i2c_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
@@ -203,13 +203,13 @@ static const struct of_device_id gc0339_dt_match[] = {
 	{}
 };
 
-
 MODULE_DEVICE_TABLE(of, gc0339_dt_match);
+
 static struct platform_driver gc0339_platform_driver = {
 	.driver = {
-	.name = "htc,gc0339",
-	.owner = THIS_MODULE,
-	.of_match_table = gc0339_dt_match,
+		.name = "htc,gc0339",
+		.owner = THIS_MODULE,
+		.of_match_table = gc0339_dt_match,
 	},
 };
 
@@ -283,10 +283,10 @@ static int __init gc0339_init_module(void)
 static void __exit gc0339_exit_module(void)
 {
 	if (gc0339_s_ctrl.pdev) {
-	msm_sensor_free_sensor_data(&gc0339_s_ctrl);
-	platform_driver_unregister(&gc0339_platform_driver);
+		msm_sensor_free_sensor_data(&gc0339_s_ctrl);
+		platform_driver_unregister(&gc0339_platform_driver);
 	} else
-	i2c_del_driver(&gc0339_i2c_driver);
+		i2c_del_driver(&gc0339_i2c_driver);
 	return;
 }
 

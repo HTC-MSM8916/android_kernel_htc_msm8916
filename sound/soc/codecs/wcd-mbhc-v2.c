@@ -156,6 +156,10 @@ static void __hphocp_off_report(struct wcd_mbhc *mbhc, u32 jack_status,
 
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_RX_COM_OCP_CTL,
 				0x10, 0x10);
+		/*
+		 * reset retry counter as PA is turned off signifying
+		 * start of new OCP detection session
+		 */
 		if (mbhc->intr_ids->hph_left_ocp)
 			mbhc->hphlocp_cnt = 0;
 		else
@@ -260,7 +264,7 @@ static int wcd_event_notify(struct notifier_block *self, unsigned long val,
 
 	pr_debug("%s: event %d micbias_enable =%d\n", __func__, event, mbhc->micbias_enable);
 	switch (event) {
-	
+	/* MICBIAS usage change */
 	case WCD_EVENT_PRE_MICBIAS_2_ON:
 		if (mbhc->micbias_enable) {
 			snd_soc_update_bits(codec,
@@ -283,7 +287,7 @@ static int wcd_event_notify(struct notifier_block *self, unsigned long val,
 		
 		wcd_program_btn_threshold(mbhc, true);
 		break;
-	
+	/* MICBIAS usage change */
 	case WCD_EVENT_PRE_MICBIAS_2_OFF:
 		snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MICB_2_EN,
@@ -346,6 +350,10 @@ static int wcd_cancel_btn_work(struct wcd_mbhc *mbhc)
 	int r;
 	r = cancel_delayed_work_sync(&mbhc->mbhc_btn_dwork);
 	if (r)
+		/*
+		 * if scheduled mbhc.mbhc_btn_dwork is canceled from here,
+		 * we have to unlock from here instead btn_work
+		 */
 		wcd9xxx_spmi_unlock_sleep();
 	pr_debug("%s: will return r = %d\n", __func__, r);
 	return r;
@@ -362,6 +370,7 @@ static bool wcd_swch_level_remove(struct wcd_mbhc *mbhc)
 	return (result2 & 0x10) ? true : false;
 }
 
+/* should be called under interrupt context that hold suspend */
 static void wcd_schedule_hs_detect_plug(struct wcd_mbhc *mbhc,
 					    struct work_struct *work)
 {
@@ -372,6 +381,7 @@ static void wcd_schedule_hs_detect_plug(struct wcd_mbhc *mbhc,
 	schedule_work(work);
 }
 
+/* called under codec_resource_lock acquisition */
 static void wcd_cancel_hs_detect_plug(struct wcd_mbhc *mbhc,
 					 struct work_struct *work)
 {
@@ -433,6 +443,8 @@ static void wcd_mbhc_set_and_turnoff_hph_padac(struct wcd_mbhc *mbhc)
 	wg_time = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_RX_HPH_CNP_WG_TIME);
 	wg_time += 1;
 
+	/* If headphone PA is on, check if userspace receives
+	* removal event to sync-up PA's state */
 	if (wcd_mbhc_is_hph_pa_on(codec)) {
 		pr_debug("%s PA is on, setting PA_OFF_ACK\n", __func__);
 		set_bit(WCD_MBHC_HPHL_PA_OFF_ACK, &mbhc->hph_pa_dac_state);
@@ -458,31 +470,31 @@ static void wcd_mbhc_calc_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,
 	WCD_MBHC_RSC_ASSERT_LOCKED(mbhc);
 	reg0 = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MASTER_BIAS_CTL);
 	reg1 = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MICB_1_EN);
-	
+	/* enable master bias */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MASTER_BIAS_CTL,
 			0x30, 0x30);
-	
+	/* enable mic bias */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MICB_1_EN,
 			0x06, 0x04);
-	
+	/* disable FSM */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x80, 0x00);
-	
+	/* Enable ZDET_L_MEAS_EN */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x08, 0x08);
 	usleep_range(2000, 2100);
-	
+	/* Read Left impedance value from Result1 */
 	impedance_l = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MBHC_BTN_RESULT);
-	
+	/* Enable ZDET_R_MEAS_EN */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x0C, 0x04);
 	usleep_range(2000, 2100);
-	
+	/* Read Right impedance value from Result1 */
 	impedance_r = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MBHC_BTN_RESULT);
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
@@ -491,11 +503,15 @@ static void wcd_mbhc_calc_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,
 	if (impedance_l > 1)
 		goto exit;
 
+	/*
+	 * As the result is 0 impedance is < 200 use
+	 * RAMP to measure impedance further.
+	 */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0xFF, 0x00);
 
-	
+	/* Enable RAMP_L , RAMP_R & ZDET_CHG*/
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_BTN0_ZDETL_CTL,
 			0x03, 0x03);
@@ -503,32 +519,32 @@ static void wcd_mbhc_calc_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x02, 0x02);
 	usleep_range(50000, 50100);
-	
+	/* Enable ZDET_DISCHG_CAP_CTL  to add extra capacitance */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x01, 0x01);
 	usleep_range(5000, 5100);
 
-	
+	/* Enable ZDET_L_MEAS_EN */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x08, 0x08);
 	usleep_range(2000, 2100);
-	
+	/* Read Left impedance value from Result1 */
 	impedance_l = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MBHC_BTN_RESULT);
-	
+	/* Enable ZDET_R_MEAS_EN */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x0C, 0x04);
 	usleep_range(2000, 2100);
-	
+	/* Read Right impedance value from Result1 */
 	impedance_r = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MBHC_BTN_RESULT);
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x04, 0x00);
 
 	if (!mbhc->mbhc_cfg->mono_stero_detection) {
-		
+		/* Set ZDET_CHG to 0  to discharge ramp */
 		snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 				0x02, 0x00);
@@ -539,37 +555,41 @@ static void wcd_mbhc_calc_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,
 		goto exit;
 	}
 
-	
+	/* Disable Set ZDET_CONN_RAMP_L and enable ZDET_CONN_FIXED_L */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_BTN0_ZDETL_CTL,
 			0x02, 0x00);
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_BTN1_ZDETM_CTL,
 			0x02, 0x02);
-	
+	/* Set ZDET_CHG to 0  */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x02, 0x00);
 	usleep_range(40000, 40100);
 
-	
+	/* Set ZDET_CONN_RAMP_R to 0  */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_BTN0_ZDETL_CTL,
 			0x01, 0x00);
-	
+	/* Enable ZDET_L_MEAS_EN */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x08, 0x08);
 	usleep_range(2000, 2100);
-	
+	/* Read Left impedance value from Result1 */
 	impedance_l_fixed = snd_soc_read(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_BTN_RESULT);
-	
+	/* Disable ZDET_L_MEAS_EN */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x08, 0x00);
+	/*
+	 * impedance_l is equal to impedance_l_fixed then headset is stereo
+	 * otherwise headset is mono
+	 */
 
-	
+	/* Enable ZDET_CHG  */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x02, 0x02);
@@ -580,7 +600,7 @@ static void wcd_mbhc_calc_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_BTN1_ZDETM_CTL,
 			0x02, 0x00);
-	
+	/* Set ZDET_CHG to 0  to discharge HPHL */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0x02, 0x00);
@@ -590,10 +610,14 @@ static void wcd_mbhc_calc_impedance(struct wcd_mbhc *mbhc, uint32_t *zl,
 			0x02, 0x00);
 
 exit:
+	/*
+	 * Enable the FSM and button source back for
+	 * button detection.
+	 */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0xFF, 0xB0);
-	
+	/* write back Master Bias and mic_bias registers */
 	snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MICB_1_EN, reg1);
 	snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MASTER_BIAS_CTL, reg0);
 	*zl = impedance_l;
@@ -611,8 +635,12 @@ static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 	pr_debug("%s: enter insertion %d hph_status %x\n",
 		 __func__, insertion, mbhc->hph_status);
 	if (!insertion) {
-		
+		/* Report removal */
 		mbhc->hph_status &= ~jack_type;
+		/*
+		 * cancel possibly scheduled btn work and
+		 * report release if we reported button press
+		 */
 		if (wcd_cancel_btn_work(mbhc)) {
 			pr_debug("%s: button press is canceled\n", __func__);
 		} else if (mbhc->buttons_pressed) {
@@ -638,6 +666,11 @@ static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 		mbhc->current_plug = MBHC_PLUG_TYPE_NONE;
 		pre_jack_type = MBHC_PLUG_TYPE_NONE;
 	} else {
+		/*
+		 * Report removal of current jack type.
+		 * Headphone to headset shouldn't report headphone
+		 * removal.
+		 */
 		if (mbhc->mbhc_cfg->detect_extn_cable &&
 		    (mbhc->current_plug == MBHC_PLUG_TYPE_HIGH_HPH ||
 		    jack_type == SND_JACK_LINEOUT) &&
@@ -675,7 +708,7 @@ static void wcd_mbhc_report_plug(struct wcd_mbhc *mbhc, int insertion,
 			jack_type == SND_JACK_HEADPHONE)
 			mbhc->hph_status &= ~SND_JACK_HEADSET;
 
-		
+		/* Report insertion */
 		mbhc->hph_status |= jack_type;
 
 		if (jack_type == SND_JACK_HEADPHONE)
@@ -724,26 +757,38 @@ static void wcd_mbhc_find_plug_and_report(struct wcd_mbhc *mbhc,
 	if (plug_type == MBHC_PLUG_TYPE_HEADPHONE) {
 		snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL, 0x30, 0x30);
+		/*
+		 * Nothing was reported previously
+		 * report a headphone or unsupported
+		 */
 		wcd_mbhc_report_plug(mbhc, 1, SND_JACK_HEADPHONE);
 	} else if (plug_type == MBHC_PLUG_TYPE_GND_MIC_SWAP) {
 		wcd_mbhc_report_plug(mbhc, 1, SND_JACK_UNSUPPORTED);
 	} else if (plug_type == MBHC_PLUG_TYPE_HEADSET) {
+		/*
+		 * If Headphone was reported previously, this will
+		 * only report the mic line
+		 */
 		wcd_mbhc_report_plug(mbhc, 1, SND_JACK_HEADSET);
 	} else if (plug_type == MBHC_PLUG_TYPE_HIGH_HPH) {
 		if (mbhc->mbhc_cfg->detect_extn_cable) {
-			
+			/* High impedance device found. Report as LINEOUT */
 			wcd_mbhc_report_plug(mbhc, 1, SND_JACK_LINEOUT);
 			pr_debug("%s: setup mic trigger for further detection\n",
 				 __func__);
 
-			
+			/* Disable HW FSM and current source */
 			snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 					0xB0, 0x0);
-			
+			/* Setup for insertion detection */
 			snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_1,
 					0x01, 0x01);
+			/*
+			 * Enable HPHL trigger and MIC Schmitt triggers
+			 * and request for elec insertion interrupts
+			 */
 			snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2,
 					0x06, 0x06);
@@ -759,20 +804,27 @@ static void wcd_mbhc_find_plug_and_report(struct wcd_mbhc *mbhc,
 	pr_debug("%s: leave\n", __func__);
 }
 
+/* To determine if cross connection occured */
 static bool wcd_check_cross_conn(struct wcd_mbhc *mbhc)
 {
 	u16 result1, swap_res;
 	struct snd_soc_codec *codec = mbhc->codec;
 	enum wcd_mbhc_plug_type plug_type = mbhc->current_plug;
 	s16 reg1;
+
 	reg1 = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2);
+	/*
+	 * Check if there is any cross connection,
+	 * Micbias and schmitt trigger (HPHL-HPHR)
+	 * needs to be enabled.
+	 */
 	result1 = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MBHC_BTN_RESULT);
-	
+
 	wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2,
 			0x6, 0x4);
-	
+	/* read reg MBHC_RESULT_2 value with cross connection bit */
 	swap_res = snd_soc_read(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_ZDET_ELECT_RESULT);
 	pr_debug("%s: swap_res %x\n", __func__, swap_res);
@@ -810,11 +862,11 @@ static bool wcd_is_special_headset(struct wcd_mbhc *mbhc)
 				    0x60, 0x60);
 		snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MICB_1_VAL,
 			      0xC0);
-		
+		/* Wait for 50msec for MICBIAS to settle down */
 		msleep(50);
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MICB_2_EN,
 					0x18, 0x10);
-		
+		/* Wait for 50msec for FSM to update result values */
 		msleep(50);
 		result2 = snd_soc_read(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_ZDET_ELECT_RESULT);
@@ -858,13 +910,13 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	mbhc = container_of(work, struct wcd_mbhc, correct_plug_swch);
 	codec = mbhc->codec;
 
-	
+	/* Enable external voltage source to micbias if present */
 	if (mbhc->mbhc_cb && mbhc->mbhc_cb->enable_mb_source)
 		mbhc->mbhc_cb->enable_mb_source(codec, true);
 
 	reg = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL);
 
-    
+	/* Enable current source for detection in correct work*/
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 			0xB0, 0xB0);
@@ -876,7 +928,7 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 					mbhc->hs_detect_work_stop);
 			goto exit;
 		}
-		
+		/* allow sometime and re-check stop requested again */
 		msleep(200);
 		if (mbhc->hs_detect_work_stop || wcd_swch_level_remove(mbhc)) {
 			pr_debug("%s: stop requested: %d\n", __func__,
@@ -894,7 +946,7 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 					0x30;
 
 		if ((!(result2 & 0x01)) && (!is_pa_on)) {
-			
+			/* Check for cross connection*/
 			if (wcd_check_cross_conn(mbhc)) {
 				plug_type = MBHC_PLUG_TYPE_GND_MIC_SWAP;
 				pt_gnd_mic_swap_cnt++;
@@ -903,12 +955,20 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 						continue;
 				else if (pt_gnd_mic_swap_cnt >
 						GND_MIC_SWAP_THRESHOLD) {
+					/*
+					 * This is due to GND/MIC switch didn't
+					 * work,  Report unsupported plug.
+					 */
 					pr_debug("%s: switch didnt work\n",
 						  __func__);
 					goto report;
 				} else if (mbhc->mbhc_cfg->swap_gnd_mic) {
 					pr_debug("%s: US_EU gpio present, flip switch\n",
 						 __func__);
+					/*
+					 * if switch is toggled, check again,
+					 * otherwise report unsupported plug
+					 */
 					if (mbhc->mbhc_cfg->swap_gnd_mic(codec))
 						continue;
 				}
@@ -931,6 +991,11 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 					plug_type);
 			if (!(plug_type == MBHC_PLUG_TYPE_GND_MIC_SWAP)) {
 				plug_type = MBHC_PLUG_TYPE_HEADSET;
+				/*
+				 * Report headset only if not already reported
+				 * and if there is not button press without
+				 * release
+				 */
 				if (mbhc->current_plug !=
 						MBHC_PLUG_TYPE_HEADSET &&
 						!mbhc->btn_press_intr) {
@@ -944,12 +1009,16 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	}
 	if (mbhc->btn_press_intr) {
 		pr_debug("%s: Can be slow insertion of headphone\n", __func__);
-		plug_type = MBHC_PLUG_TYPE_HEADPHONE;
-
-	}
+			plug_type = MBHC_PLUG_TYPE_HEADPHONE;
+		}
+	/*
+	 * If plug_tye is headset, we might have already reported either in
+	 * detect_plug-type or in above while loop, no need to report again
+	 */
 	if (!wrk_complete && plug_type == MBHC_PLUG_TYPE_HEADSET) {
 		pr_debug("%s: It's neither headset nor headphone\n", __func__);
-        snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL, reg);
+		/* Write back current source value */
+		snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL, reg);
 		if (plug_type == MBHC_PLUG_TYPE_HEADSET) {
 			if (!(mbhc->is_hs_recording || det_extn_cable_en))
 				wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_CS);
@@ -972,7 +1041,7 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	}
 
 report:
-	
+	/* Write back current source value */
 	snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL, reg);
 	pr_debug("%s: Valid plug found, plug type %d wrk_cmpt %d btn_intr %d\n",
 			__func__, plug_type, wrk_complete,
@@ -987,7 +1056,7 @@ report:
 	}
 	wcd_mbhc_find_plug_and_report(mbhc, plug_type);
 exit:
-	
+	/* Disable external voltage source to micbias if present */
 	if (mbhc->mbhc_cb && mbhc->mbhc_cb->enable_mb_source)
 		mbhc->mbhc_cb->enable_mb_source(codec, false);
 	micbias2 = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MICB_2_EN);
@@ -996,10 +1065,11 @@ exit:
 	pr_debug("%s: leave\n", __func__);
 }
 
+/* called under codec_resource_lock acquisition */
 static void wcd_mbhc_detect_plug_type(struct wcd_mbhc *mbhc)
 {
 	struct snd_soc_codec *codec = mbhc->codec;
-	long timeout = msecs_to_jiffies(50);   
+	long timeout = msecs_to_jiffies(50);   /* 50ms */
 	enum wcd_mbhc_plug_type plug_type;
 	int timeout_result;
 	u16 result1, result2;
@@ -1009,12 +1079,16 @@ static void wcd_mbhc_detect_plug_type(struct wcd_mbhc *mbhc)
 	pr_debug("%s: enter\n", __func__);
 	WCD_MBHC_RSC_ASSERT_LOCKED(mbhc);
 
-	
+	/* Enable external voltage source to micbias if present */
 	if (mbhc->mbhc_cb && mbhc->mbhc_cb->enable_mb_source)
 		mbhc->mbhc_cb->enable_mb_source(codec, true);
 
 	wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_MB);
 	wcd_configure_cap(mbhc, true);
+	/*
+	 * Wait for 50msec for FSM to complete its task.
+	 * wakeup if btn pres intr occurs
+	 */
 	mbhc->is_btn_press = false;
 	WCD_MBHC_RSC_UNLOCK(mbhc);
 	timeout_result = wait_event_interruptible_timeout(mbhc->wait_btn_press,
@@ -1027,9 +1101,19 @@ static void wcd_mbhc_detect_plug_type(struct wcd_mbhc *mbhc)
 
 	if (!timeout_result) {
 		pr_debug("%s No btn press interrupt\n", __func__);
+		/*
+		 * Check if there is any cross connection,
+		 * Micbias and schmitt trigger (HPHL-HPHR)
+		 * needs to be enabled.
+		 */
 		pr_debug("%s: result1 %x, result2 %x\n", __func__,
 						result1, result2);
 		if (!(result2 & 0x01)) {
+			/*
+			 * Cross connection result is not reliable
+			 * so do check for it for 4 times to conclude
+			 * cross connection occured or not.
+			 */
 			do {
 				cross_conn = wcd_check_cross_conn(mbhc);
 				try++;
@@ -1042,7 +1126,7 @@ static void wcd_mbhc_detect_plug_type(struct wcd_mbhc *mbhc)
 			}
 		}
 
-		
+		/* Read back result1 and result2 value again to reconfirm*/
 		result1 = snd_soc_read(codec,
 			  MSM8X16_WCD_A_ANALOG_MBHC_BTN_RESULT);
 		result2 = snd_soc_read(codec,
@@ -1065,7 +1149,7 @@ static void wcd_mbhc_detect_plug_type(struct wcd_mbhc *mbhc)
 		}
 	}
 exit:
-	
+	/* Disable external voltage source to micbias if present */
 	if (mbhc->mbhc_cb && mbhc->mbhc_cb->enable_mb_source)
 		mbhc->mbhc_cb->enable_mb_source(codec, false);
 
@@ -1099,21 +1183,21 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 
 	mbhc->in_swch_irq_handler = true;
 
-	
+	/* cancel pending button press */
 	if (wcd_cancel_btn_work(mbhc))
 		pr_debug("%s: button press is canceled\n", __func__);
 
 	detection_type = (snd_soc_read(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_1)) & 0x20;
 
-	
+	/* Set the detection type appropriately */
 	snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_1,
 			0x20, (!detection_type << 5));
 	wcd_cancel_hs_detect_plug(mbhc, &mbhc->correct_plug_swch);
 
 	if ((mbhc->current_plug == MBHC_PLUG_TYPE_NONE) &&
 	    detection_type) {
-		
+		/* Make sure MASTER_BIAS_CTL is enabled */
 		snd_soc_update_bits(codec,
 				    MSM8X16_WCD_A_ANALOG_MASTER_BIAS_CTL,
 				    0x30, 0x30);
@@ -1121,17 +1205,23 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 				MSM8X16_WCD_A_ANALOG_MICB_1_EN,
 				0x04, 0x04);
 		if (!mbhc->mbhc_cfg->hs_ext_micbias)
+			/* Enable Tx2 RBias if the headset
+			 * is using internal micbias*/
 			snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_MICB_1_INT_RBIAS,
 					0x10, 0x10);
-		
+		/* Remove pull down on MIC BIAS2 */
 		snd_soc_update_bits(codec,
 				 MSM8X16_WCD_A_ANALOG_MICB_2_EN,
 				0x20, 0x00);
-		
+		/* Enable HW FSM */
 		snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 				0x80, 0x80);
+		/*
+		 * Calculate the trim value for each device used
+		 * till is comes in production by hardware team.
+		 */
 		snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_SEC_ACCESS,
 				0xA5, 0xA5);
@@ -1141,7 +1231,7 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 		mbhc->btn_press_intr = false;
 		wcd_mbhc_detect_plug_type(mbhc);
 	} else if ((mbhc->current_plug != MBHC_PLUG_TYPE_NONE) && !detection_type) {
-		
+		/* Disable HW FSM */
 		snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 				0xB0, 0x00);
@@ -1161,7 +1251,7 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 			snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2,
 					0x06, 0x00);
-			
+			/* Enable current source */
 			snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 				0x30, 0x30);
@@ -1177,7 +1267,7 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 			snd_soc_update_bits(codec,
 					MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2,
 					0x06, 0x00);
-			
+			/* Enable current source */
 			snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 				0x30, 0x30);
@@ -1185,7 +1275,7 @@ static void wcd_mbhc_swch_irq_handler(struct wcd_mbhc *mbhc)
 
 		}
 	} else if (!detection_type) {
-		
+		/* Disable HW FSM */
 		snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 				0xB0, 0x00);
@@ -1206,7 +1296,7 @@ static irqreturn_t wcd_mbhc_mech_plug_detect_irq(int irq, void *data)
 		pr_warn("%s: failed to hold suspend\n", __func__);
 		r = IRQ_NONE;
 	} else {
-		
+		/* Call handler */
 		wcd_mbhc_swch_irq_handler(mbhc);
 		wcd9xxx_spmi_unlock_sleep();
 	}
@@ -1272,9 +1362,9 @@ static irqreturn_t wcd_mbhc_hs_ins_irq(int irq, void *data)
 	pr_debug("%s: detection_type %d, result2 %x\n", __func__,
 				detection_type, result2);
 	if (detection_type) {
-		
+		/* chech if both Left and MIC Schmitt triggers are triggered */
 		if (result2 == 0x0A) {
-			
+			/* Go for plug type determination */
 			pr_debug("%s: Go for plug type determination\n",
 				  __func__);
 			goto determine_plug;
@@ -1298,7 +1388,7 @@ static irqreturn_t wcd_mbhc_hs_ins_irq(int irq, void *data)
 					 __func__, hphl_trigerred);
 			}
 			if (mic_trigerred && hphl_trigerred) {
-				
+				/* Go for plug type determination */
 				pr_debug("%s: Go for plug type determination\n",
 					 __func__);
 				goto determine_plug;
@@ -1310,13 +1400,17 @@ static irqreturn_t wcd_mbhc_hs_ins_irq(int irq, void *data)
 	return IRQ_HANDLED;
 
 determine_plug:
+	/*
+	 * Disable HPHL trigger and MIC Schmitt triggers.
+	 * Setup for insertion detection.
+	 */
 	pr_debug("%s: Disable insertion interrupt\n", __func__);
 	wcd9xxx_spmi_disable_irq(mbhc->intr_ids->mbhc_hs_ins_intr);
 
 	snd_soc_update_bits(codec,
 		MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2,
 		0x06, 0x00);
-	
+	/* Enable HW FSM */
 	snd_soc_update_bits(codec,
 		MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 		0x80, 0x80);
@@ -1361,6 +1455,10 @@ static irqreturn_t wcd_mbhc_hs_rem_irq(int irq, void *data)
 
 	if (removed) {
 		if (!result2) {
+			/*
+			 * extension cable is still plugged in
+			 * report it as LINEOUT device
+			 */
 			goto report_unplug;
 		} else {
 			if (!(result2 & 0x02)) {
@@ -1374,6 +1472,10 @@ static irqreturn_t wcd_mbhc_hs_rem_irq(int irq, void *data)
 					 __func__, hphl_trigerred);
 			}
 			if (mic_trigerred && hphl_trigerred) {
+				/*
+				 * extension cable is still plugged in
+				 * report it as LINEOUT device
+				 */
 				goto report_unplug;
 			}
 		}
@@ -1385,16 +1487,20 @@ static irqreturn_t wcd_mbhc_hs_rem_irq(int irq, void *data)
 report_unplug:
 
 	pr_debug("%s: Report extension cable\n", __func__);
+	/*
+	 * Disable HPHL trigger and MIC Schmitt triggers.
+	 * Setup for insertion detection.
+	 */
 	wcd9xxx_spmi_disable_irq(mbhc->intr_ids->mbhc_hs_rem_intr);
 	wcd_enable_curr_micbias(mbhc, WCD_MBHC_EN_NONE);
-	
+	/* Disable HW FSM and current source */
 	snd_soc_update_bits(codec,
 		MSM8X16_WCD_A_ANALOG_MBHC_FSM_CTL,
 		0x80, 0x00);
 	snd_soc_update_bits(codec,
 		MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2,
 		0x06, 0x06);
-	
+	/* Set the detection type appropriately */
 	snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_1,
 				0x01, 0x01);
 	wcd9xxx_spmi_enable_irq(mbhc->intr_ids->mbhc_hs_ins_intr);
@@ -1440,7 +1546,7 @@ irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 
 	pr_debug("%s: enter\n", __func__);
 	WCD_MBHC_RSC_LOCK(mbhc);
-	
+	/* send event to sw intr handler*/
 	mbhc->is_btn_press = true;
 	wake_up_interruptible(&mbhc->wait_btn_press);
 	if (wcd_swch_level_remove(mbhc)) {
@@ -1456,7 +1562,7 @@ irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 		goto done;
 	}
 
-	
+	/* If switch interrupt already kicked in, ignore button press */
 	if (mbhc->in_swch_irq_handler) {
 		pr_debug("%s: Swtich level changed, ignore button press\n",
 			 __func__);
@@ -1509,6 +1615,11 @@ static irqreturn_t wcd_mbhc_release_handler(int irq, void *data)
 		goto exit;
 	}
 
+	/*
+	 * If current plug is headphone then there is no chance to
+	 * get btn release interrupt, so connected cable should be
+	 * headset not headphone.
+	 */
 	if (mbhc->current_plug == MBHC_PLUG_TYPE_HEADPHONE) {
 		wcd_mbhc_report_plug(mbhc, 1, SND_JACK_HEADSET);
 		goto exit;
@@ -1610,31 +1721,32 @@ static int wcd_mbhc_initialise(struct wcd_mbhc *mbhc)
 	struct snd_soc_codec *codec = mbhc->codec;
 
 	pr_debug("%s: enter\n", __func__);
-	
+	/* Bring the digital block out of reset */
 	snd_soc_update_bits(codec, MSM8X16_WCD_A_DIGITAL_CDC_RST_CTL,
 			0x80, 0x80);
 	snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_1, 0xB5);
-	
+	/* enable HS detection */
 	snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2, 0xE8);
 	snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2, 0x18,
 				(mbhc->hphl_swh << 4 | mbhc->gnd_swh << 3));
 
 	snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MBHC_DET_CTL_2,
 			0x01, 0x01);
+
 	snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MBHC_DBNC_TIMER, 0xC8);
 
-	
+	/* enable MBHC clock */
 	snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_DIGITAL_CDC_DIG_CLK_CTL,
 			0x08, 0x08);
 
 	snd_soc_write(codec, MSM8X16_WCD_A_ANALOG_MBHC_BTN3_CTL, 0x27);
 
-	
+	/* Program Button threshold registers */
 	wcd_program_btn_threshold(mbhc, false);
 
 	INIT_WORK(&mbhc->correct_plug_swch, wcd_correct_swch_plug);
-	
+	/* enable the WCD MBHC IRQ's */
 	wcd9xxx_spmi_enable_irq(mbhc->intr_ids->mbhc_sw_intr);
 	wcd9xxx_spmi_enable_irq(mbhc->intr_ids->mbhc_btn_press_intr);
 	wcd9xxx_spmi_enable_irq(mbhc->intr_ids->mbhc_btn_release_intr);
@@ -1650,7 +1762,7 @@ int wcd_mbhc_start(struct wcd_mbhc *mbhc,
 	int rc = 0;
 
 	pr_debug("%s: enter\n", __func__);
-	
+	/* update the mbhc config */
 	mbhc->mbhc_cfg = mbhc_cfg;
 	rc = wcd_mbhc_initialise(mbhc);
 	pr_debug("%s: leave %d\n", __func__, rc);
@@ -1667,6 +1779,11 @@ void wcd_mbhc_stop(struct wcd_mbhc *mbhc)
 }
 EXPORT_SYMBOL(wcd_mbhc_stop);
 
+/*
+ * wcd_mbhc_init : initialize MBHC internal structures.
+ *
+ * NOTE: mbhc->mbhc_cfg is not YET configure so shouldn't be used
+ */
 int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 		      const struct wcd_mbhc_cb *mbhc_cb,
 		      const struct wcd_mbhc_intr *mbhc_cdc_intr_ids,
@@ -1771,7 +1888,7 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 		INIT_DELAYED_WORK(&mbhc->mbhc_btn_dwork, wcd_btn_lpress_fn);
 	}
 
-	
+	/* Register event notifier */
 	mbhc->nblock.notifier_call = wcd_event_notify;
 	ret = msm8x16_register_notifier(codec, &mbhc->nblock);
 	if (ret) {

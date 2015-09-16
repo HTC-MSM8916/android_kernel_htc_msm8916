@@ -97,12 +97,14 @@ static struct snd_soc_dai_driver msm8x16_wcd_i2s_dai[];
 #define MSM8X16_WCD_RELEASE_LOCK(x) mutex_unlock(&x);
 
 
+/* Codec supports 2 IIR filters */
 enum {
 	IIR1 = 0,
 	IIR2,
 	IIR_MAX,
 };
 
+/* Codec supports 5 bands */
 enum {
 	BAND1 = 0,
 	BAND2,
@@ -277,7 +279,7 @@ static int msm8x16_wcd_spmi_write_device(u16 reg, u8 *value, u32 bytes)
 						wcd->base + reg, value, bytes);
 	if (ret)
 		pr_err("Unable to write to addr=%x, ret(%d)\n", reg, ret);
-	
+	/* Try again if the write fails */
 	if (ret != 0) {
 		usleep(10);
 		ret = spmi_ext_register_writel(wcd->spmi->ctrl, wcd->spmi->sid,
@@ -559,7 +561,7 @@ static struct msm8x16_wcd_pdata *msm8x16_wcd_populate_dt_pdata(
 		goto err;
 	}
 
-	
+	/* On-demand supply list is an optional property */
 	ond_cnt = of_property_count_strings(dev->of_node, ond_prop_name);
 	if (IS_ERR_VALUE(ond_cnt))
 		ond_cnt = 0;
@@ -1119,7 +1121,7 @@ static int msm8x16_wcd_put_iir_enable_audio_mixer(
 					kcontrol->private_value)->shift;
 	int value = ucontrol->value.integer.value[0];
 
-	
+	/* Mask first 5 bits, 6-8 are reserved */
 	snd_soc_update_bits(codec,
 		(MSM8X16_WCD_A_CDC_IIR1_CTL + 64 * iir_idx),
 			    (1 << band_idx), (value << band_idx));
@@ -1138,7 +1140,7 @@ static uint32_t get_iir_band_coeff(struct snd_soc_codec *codec,
 {
 	uint32_t value = 0;
 
-	
+	/* Address does not automatically update if reading */
 	snd_soc_write(codec,
 		(MSM8X16_WCD_A_CDC_IIR1_COEF_B1_CTL + 64 * iir_idx),
 		((band_idx * BAND_MAX + coeff_idx)
@@ -1168,7 +1170,7 @@ static uint32_t get_iir_band_coeff(struct snd_soc_codec *codec,
 		((band_idx * BAND_MAX + coeff_idx)
 		* sizeof(uint32_t) + 3) & 0x7F);
 
-	
+	/* Mask bits top 2 bits since they are reserved */
 	value |= ((snd_soc_read(codec, (MSM8X16_WCD_A_CDC_IIR1_COEF_B2_CTL
 		+ 64 * iir_idx)) & 0x3f) << 24);
 
@@ -1231,7 +1233,7 @@ static void set_iir_band_coeff(struct snd_soc_codec *codec,
 		(MSM8X16_WCD_A_CDC_IIR1_COEF_B2_CTL + 64 * iir_idx),
 		(value >> 16) & 0xFF);
 
-	
+	/* Mask top 2 bits, 7-8 are reserved */
 	snd_soc_write(codec,
 		(MSM8X16_WCD_A_CDC_IIR1_COEF_B2_CTL + 64 * iir_idx),
 		(value >> 24) & 0x3F);
@@ -1248,8 +1250,8 @@ static int msm8x16_wcd_put_iir_band_audio_mixer(
 	int band_idx = ((struct soc_multi_mixer_control *)
 					kcontrol->private_value)->shift;
 
-	
-	
+	/* Mask top bit it is reserved */
+	/* Updates addr automatically for each B2 write */
 	snd_soc_write(codec,
 		(MSM8X16_WCD_A_CDC_IIR1_COEF_B1_CTL + 64 * iir_idx),
 		(band_idx * BAND_MAX * sizeof(uint32_t)) & 0x7F);
@@ -1313,6 +1315,7 @@ static const struct soc_enum msm8x16_wcd_spk_boost_ctl_enum[] = {
 		SOC_ENUM_SINGLE_EXT(2, msm8x16_wcd_spk_boost_ctrl_text),
 };
 
+/*cut of frequency for high pass filter*/
 static const char * const cf_text[] = {
 	"MIN_3DB_4Hz", "MIN_3DB_75Hz", "MIN_3DB_150Hz"
 };
@@ -1502,6 +1505,7 @@ static const char * const iir1_inp1_text[] = {
 static const struct soc_enum adc2_enum =
 	SOC_ENUM_SINGLE(0, 0, ARRAY_SIZE(adc2_mux_text), adc2_mux_text);
 
+/* RX1 MIX1 */
 static const struct soc_enum rx_mix1_inp1_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX1_B1_CTL,
 		0, 6, rx_mix1_text);
@@ -1514,10 +1518,12 @@ static const struct soc_enum rx_mix1_inp3_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX1_B2_CTL,
 		0, 6, rx_mix1_text);
 
+/* RX1 MIX2 */
 static const struct soc_enum rx_mix2_inp1_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX1_B3_CTL,
 		0, 3, rx_mix2_text);
 
+/* RX2 MIX1 */
 static const struct soc_enum rx2_mix1_inp1_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX2_B1_CTL,
 		0, 6, rx_mix1_text);
@@ -1530,10 +1536,12 @@ static const struct soc_enum rx2_mix1_inp3_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX2_B1_CTL,
 		0, 6, rx_mix1_text);
 
+/* RX2 MIX2 */
 static const struct soc_enum rx2_mix2_inp1_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX2_B3_CTL,
 		0, 3, rx_mix2_text);
 
+/* RX3 MIX1 */
 static const struct soc_enum rx3_mix1_inp1_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX3_B1_CTL,
 		0, 6, rx_mix1_text);
@@ -1546,6 +1554,7 @@ static const struct soc_enum rx3_mix1_inp3_chain_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_RX3_B1_CTL,
 		0, 6, rx_mix1_text);
 
+/* DEC */
 static const struct soc_enum dec1_mux_enum =
 	SOC_ENUM_SINGLE(MSM8X16_WCD_A_CDC_CONN_TX_B1_CTL,
 		0, 6, dec_mux_text);
@@ -1810,6 +1819,7 @@ static int msm8x16_wcd_codec_enable_adc(struct snd_soc_dapm_widget *w,
 			snd_soc_update_bits(codec,
 				MSM8X16_WCD_A_DIGITAL_CDC_CONN_TX2_CTL,
 				0x03, 0x02);
+
 		break;
 	}
 	return 0;
@@ -2248,7 +2258,7 @@ static int msm8x16_wcd_codec_enable_dec(struct snd_soc_dapm_widget *w,
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		
+		/* Enableable TX digital mute */
 		snd_soc_update_bits(codec, tx_vol_ctl_reg, 0x01, 0x01);
 		for (i = 0; i < NUM_DECIMATORS; i++) {
 			if (decimator == i + 1)
@@ -2264,14 +2274,14 @@ static int msm8x16_wcd_codec_enable_dec(struct snd_soc_dapm_widget *w,
 
 		if ((dec_hpf_cut_of_freq != CF_MIN_3DB_150HZ)) {
 
-			
+			/* set cut of freq to CF_MIN_3DB_150HZ (0x1); */
 			snd_soc_update_bits(codec, tx_mux_ctl_reg, 0x30,
 					    CF_MIN_3DB_150HZ << 4);
 		}
 
 		break;
 	case SND_SOC_DAPM_POST_PMU:
-		
+		/* enable HPF */
 		snd_soc_update_bits(codec, tx_mux_ctl_reg , 0x08, 0x00);
 
 		if (tx_hpf_work[decimator - 1].tx_hpf_cut_of_freq !=
@@ -2280,7 +2290,7 @@ static int msm8x16_wcd_codec_enable_dec(struct snd_soc_dapm_widget *w,
 			schedule_delayed_work(&tx_hpf_work[decimator - 1].dwork,
 					msecs_to_jiffies(300));
 		}
-		
+		/* apply the digital gain after the decimator is enabled*/
 		if ((w->shift) < ARRAY_SIZE(tx_digital_gain_reg))
 			snd_soc_write(codec,
 				  tx_digital_gain_reg[w->shift + offset],
@@ -2331,7 +2341,7 @@ static int msm8x16_wcd_codec_enable_interpolator(struct snd_soc_dapm_widget *w,
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
-		
+		/* apply the digital gain after the interpolator is enabled*/
 		if ((w->shift) < ARRAY_SIZE(rx_digital_gain_reg))
 			snd_soc_write(codec,
 				  rx_digital_gain_reg[w->shift],
@@ -2346,6 +2356,9 @@ static int msm8x16_wcd_codec_enable_interpolator(struct snd_soc_dapm_widget *w,
 		snd_soc_update_bits(codec,
 			MSM8X16_WCD_A_CDC_CLK_RX_RESET_CTL,
 			1 << w->shift, 0x0);
+		/*
+		 * disable the mute enabled during the PMD of this device
+		 */
 		if (msm8x16_wcd->mute_mask & HPHL_PA_DISABLE) {
 			pr_debug("disabling HPHL mute\n");
 			snd_soc_update_bits(codec,
@@ -2375,6 +2388,7 @@ static int msm8x16_wcd_codec_enable_interpolator(struct snd_soc_dapm_widget *w,
 }
 
 
+/* The register address is the same as other codec so it can use resmgr */
 static int msm8x16_wcd_codec_enable_rx_bias(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *kcontrol, int event)
 {
@@ -2565,12 +2579,12 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"I2S TX1", NULL, "DEC1 MUX"},
 	{"I2S TX2", NULL, "DEC2 MUX"},
 
-	
+	/* RDAC Connections */
 	{"HPHR DAC", NULL, "RDAC2 MUX"},
 	{"RDAC2 MUX", "RX1", "RX1 CHAIN"},
 	{"RDAC2 MUX", "RX2", "RX2 CHAIN"},
 
-	
+	/* Earpiece (RX MIX1) */
 	{"EAR", NULL, "EAR_S"},
 	{"EAR_S", "Switch", "EAR PA"},
 	{"EAR PA", NULL, "RX_BIAS"},
@@ -2578,7 +2592,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"EAR PA", NULL, "HPHR DAC"},
 	{"EAR PA", NULL, "EAR CP"},
 
-	
+	/* Headset (RX MIX1 and RX MIX2) */
 	{"HEADPHONE", NULL, "HPHL PA"},
 	{"HEADPHONE", NULL, "HPHR PA"},
 
@@ -2649,7 +2663,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"RX1 MIX2 INP1", "IIR1", "IIR1"},
 	{"RX2 MIX2 INP1", "IIR1", "IIR1"},
 
-	
+	/* Decimator Inputs */
 	{"DEC1 MUX", "DMIC1", "DMIC1"},
 	{"DEC1 MUX", "DMIC2", "DMIC2"},
 	{"DEC1 MUX", "ADC1", "ADC1"},
@@ -2664,7 +2678,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"DEC2 MUX", "ADC3", "ADC3"},
 	{"DEC2 MUX", NULL, "CDC_CONN"},
 
-	
+	/* ADC Connections */
 	{"ADC2", NULL, "ADC2 MUX"},
 	{"ADC3", NULL, "ADC2 MUX"},
 	{"ADC2 MUX", "INP2", "ADC2_INP2"},
@@ -2674,7 +2688,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"ADC2_INP2", NULL, "AMIC2"},
 	{"ADC2_INP3", NULL, "AMIC3"},
 
-	
+	/* TODO: Fix this */
 	{"IIR1", NULL, "IIR1 INP1 MUX"},
 	{"IIR1 INP1 MUX", "DEC1", "DEC1 MUX"},
 	{"IIR1 INP1 MUX", "DEC2", "DEC2 MUX"},
@@ -2916,6 +2930,11 @@ int msm8x16_wcd_digital_mute(struct snd_soc_dai *dai, int mute)
 
 	mute = (mute) ? 1 : 0;
 	if (!mute && msm8x16_wcd->mbhc.current_plug == MBHC_PLUG_TYPE_HEADSET) {
+		/*
+		 * 23 ms is an emperical value for the mute time
+		 * that was arrived by checking the pop level
+		 * to be inaudible
+		 */
 		msleep(23);
 	}
 
@@ -3036,6 +3055,10 @@ static int msm8x16_wcd_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_RX_EAR_CTL,
 			    0x40, 0x00);
 		usleep_range(7000, 7100);
+		/*
+		 * Reset pa select bit from ear to hph after ear pa
+		 * is disabled to reduce ear turn off pop
+		 */
 		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_RX_EAR_CTL,
 			    0x80, 0x00);
 		break;
@@ -3044,7 +3067,7 @@ static int msm8x16_wcd_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 }
 
 static const struct snd_soc_dapm_widget msm8x16_wcd_dapm_widgets[] = {
-	
+	/*RX stuff */
 	SND_SOC_DAPM_OUTPUT("EAR"),
 
 	SND_SOC_DAPM_PGA_E("EAR PA", SND_SOC_NOPM,
@@ -3096,7 +3119,7 @@ static const struct snd_soc_dapm_widget msm8x16_wcd_dapm_widgets[] = {
 	SND_SOC_DAPM_MIXER("SPK DAC", SND_SOC_NOPM, 0, 0,
 		spkr_switch, ARRAY_SIZE(spkr_switch)),
 
-	
+	/* Speaker */
 	SND_SOC_DAPM_OUTPUT("SPK_OUT"),
 
 	SND_SOC_DAPM_PGA_E("SPK PA", MSM8X16_WCD_A_ANALOG_SPKR_DRV_CTL,
@@ -3199,7 +3222,7 @@ static const struct snd_soc_dapm_widget msm8x16_wcd_dapm_widgets[] = {
 		msm8x16_wcd_codec_enable_rx_bias, SND_SOC_DAPM_PRE_PMU |
 		SND_SOC_DAPM_POST_PMD),
 
-	
+	/* TX */
 
 	SND_SOC_DAPM_SUPPLY("CDC_CONN", MSM8X16_WCD_A_CDC_CLK_OTHR_CTL,
 		2, 0, NULL, 0),
@@ -3267,7 +3290,7 @@ static const struct snd_soc_dapm_widget msm8x16_wcd_dapm_widgets[] = {
 	SND_SOC_DAPM_AIF_OUT("I2S TX3", "AIF1 Capture", 0, SND_SOC_NOPM,
 		0, 0),
 
-	
+	/* Digital Mic Inputs */
 	SND_SOC_DAPM_ADC_E("DMIC1", NULL, SND_SOC_NOPM, 0, 0,
 		msm8x16_wcd_codec_enable_dmic, SND_SOC_DAPM_PRE_PMU |
 		SND_SOC_DAPM_POST_PMD),
@@ -3276,7 +3299,7 @@ static const struct snd_soc_dapm_widget msm8x16_wcd_dapm_widgets[] = {
 		msm8x16_wcd_codec_enable_dmic, SND_SOC_DAPM_PRE_PMU |
 		SND_SOC_DAPM_POST_PMD),
 
-	
+	/* Sidetone */
 	SND_SOC_DAPM_MUX("IIR1 INP1 MUX", SND_SOC_NOPM, 0, 0, &iir1_inp1_mux),
 	SND_SOC_DAPM_PGA("IIR1",
 		MSM8X16_WCD_A_CDC_CLK_SD_CTL, 0, 0, NULL, 0),
@@ -3327,6 +3350,9 @@ static void msm8x16_wcd_update_reg_defaults(struct snd_soc_codec *codec)
 static const struct msm8x16_wcd_reg_mask_val
 	msm8x16_wcd_codec_reg_init_val[] = {
 
+	/* Initialize current threshold to 350MA
+	 * number of wait and run cycles to 4096
+	 */
 	{MSM8X16_WCD_A_ANALOG_RX_COM_OCP_CTL, 0xFF, 0xD1},
 	{MSM8X16_WCD_A_ANALOG_RX_COM_OCP_COUNT, 0xFF, 0xFF},
 };
@@ -3401,7 +3427,7 @@ static int msm8x16_wcd_device_up(struct snd_soc_codec *codec)
 	for (reg = 0; reg < ARRAY_SIZE(msm8x16_wcd_reset_reg_defaults); reg++)
 		if (msm8x16_wcd_reg_readable[reg])
 			msm8x16_wcd_write(codec,
-			reg, msm8x16_wcd_reset_reg_defaults[reg]);
+				reg, msm8x16_wcd_reset_reg_defaults[reg]);
 
 	if (codec->reg_def_copy) {
 		pr_debug("%s: Update ASOC cache", __func__);
@@ -3416,7 +3442,7 @@ static int msm8x16_wcd_device_up(struct snd_soc_codec *codec)
 	}
 
 	snd_soc_card_change_online_state(codec->card, 1);
-	
+	/* delay is required to make sure sound card state updated */
 	usleep_range(5000, 5100);
 
 	msm8x16_wcd_bringup(codec);
@@ -3523,7 +3549,7 @@ static int msm8x16_wcd_codec_probe(struct snd_soc_codec *codec)
 	snd_soc_codec_set_drvdata(codec, msm8x16_wcd_priv);
 	msm8x16_wcd_priv->codec = codec;
 
-	
+	/* codec resmgr module init */
 	msm8x16_wcd = codec->control_data;
 	msm8x16_wcd->dig_base = ioremap(MSM8X16_DIGITAL_CODEC_BASE_ADDR,
 				  MSM8X16_DIGITAL_CODEC_REG_SIZE);

@@ -26,11 +26,14 @@
 #include <soc/qcom/smd.h>
 #include <asm/atomic.h>
 
+/* Size of the USB buffers used for read and write*/
 #define USB_MAX_OUT_BUF 4096
 #define APPS_BUF_SIZE	4096
 #define IN_BUF_SIZE		16384
 #define MAX_IN_BUF_SIZE	32768
 #define MAX_SYNC_OBJ_NAME_SIZE	32
+/* Size of the buffer used for deframing a packet
+  reveived from the PC tool*/
 #define HDLC_MAX 4096
 #define HDLC_OUT_BUF_SIZE	8192
 #define POOL_TYPE_COPY		1
@@ -83,6 +86,12 @@
 #define APPS_PROC		1
 #define LPASS_PROC		2
 #define WCNSS_PROC		3
+/*
+ * Each row contains First (uint32_t), Last (uint32_t), Actual
+ * last (uint32_t) values along with the range of SSIDs
+ * (MAX_SSID_PER_RANGE*uint32_t).
+ * And there are MSG_MASK_TBL_CNT rows.
+ */
 #define MSG_MASK_SIZE		((MAX_SSID_PER_RANGE+3) * 4 * MSG_MASK_TBL_CNT)
 #define MAX_EQUIP_ID		16
 #define MAX_ITEMS_PER_EQUIP_ID	512
@@ -97,10 +106,10 @@
 #define DIAG_CTRL_MSG_F3_MASK	11
 #define CONTROL_CHAR	0x7E
 
-#define DIAG_CON_APSS (0x0001)	
-#define DIAG_CON_MPSS (0x0002)	
-#define DIAG_CON_LPASS (0x0004)	
-#define DIAG_CON_WCNSS (0x0008)	
+#define DIAG_CON_APSS (0x0001)	/* Bit mask for APSS */
+#define DIAG_CON_MPSS (0x0002)	/* Bit mask for MPSS */
+#define DIAG_CON_LPASS (0x0004)	/* Bit mask for LPASS */
+#define DIAG_CON_WCNSS (0x0008)	/* Bit mask for WCNSS */
 
 #define NUM_STM_PROCESSORS	4
 
@@ -129,8 +138,14 @@
 #define MODE_CMD	41
 #define RESET_ID	2
 
-#define DIAG_STATUS_OPEN (0x00010000)	
-#define DIAG_STATUS_CLOSED (0x00020000)	
+/*
+ * The status bit masks when received in a signal handler are to be
+ * used in conjunction with the peripheral list bit mask to determine the
+ * status for a peripheral. For instance, 0x00010002 would denote an open
+ * status on the MPSS
+ */
+#define DIAG_STATUS_OPEN (0x00010000)	/* DCI channel open status mask   */
+#define DIAG_STATUS_CLOSED (0x00020000)	/* DCI channel closed status mask */
 
 #define MODE_REALTIME 1
 #define MODE_NONREALTIME 0
@@ -141,8 +156,14 @@
 #define NUM_SMD_CMD_CHANNELS 1
 #define NUM_SMD_DCI_CMD_CHANNELS 1
 
+/*
+ * Indicates number of peripherals that can support DCI and Apps
+ * processor. This doesn't mean that a peripheral has the
+ * feature.
+ */
 #define NUM_DCI_PERIPHERALS	(NUM_SMD_DATA_CHANNELS + 1)
 
+/* Indicates the number of processors that support DCI */
 #define NUM_DCI_PROC		2
 
 #define SMD_DATA_TYPE 0
@@ -154,6 +175,8 @@
 #define DIAG_PROC_DCI			1
 #define DIAG_PROC_MEMORY_DEVICE		2
 
+/* Flags to vote the DCI or Memory device process up or down
+   when it becomes active or inactive */
 #define VOTE_DOWN			0
 #define VOTE_UP				1
 
@@ -165,14 +188,17 @@
 
 #define DIAG_LOCAL_PROC	0
 #ifdef CONFIG_DIAGFWD_BRIDGE_CODE
+/* Local Processor + HSIC channels */
 #define DIAG_NUM_PROC	(1 + MAX_HSIC_DATA_CH)
 #else
+/* Local Processor only */
 #define DIAG_NUM_PROC	1
 #endif
 
 #define DIAG_WS_DCI		0
 #define DIAG_WS_MD		1
 
+/* Maximum number of pkt reg supported at initialization*/
 extern int diag_max_reg;
 extern int diag_threshold_reg;
 
@@ -183,6 +209,7 @@ do {							\
 	(diag_debug_buf_idx++) : (diag_debug_buf_idx = 0); \
 } while (0)
 
+/* List of remote processor supported */
 enum remote_procs {
 	MDM = 1,
 	MDM2 = 2,
@@ -207,10 +234,10 @@ struct diag_master_table {
 };
 
 struct bindpkt_params_per_process {
-	
+	/* Name of the synchronization object associated with this proc */
 	char sync_obj_name[MAX_SYNC_OBJ_NAME_SIZE];
-	uint32_t count;	
-	struct bindpkt_params *params; 
+	uint32_t count;	/* Number of entries in this bind */
+	struct bindpkt_params *params; /* first bind params */
 };
 
 struct bindpkt_params {
@@ -218,11 +245,11 @@ struct bindpkt_params {
 	uint16_t subsys_id;
 	uint16_t cmd_code_lo;
 	uint16_t cmd_code_hi;
-	
+	/* For Central Routing, used to store Processor number */
 	uint16_t proc_id;
 	uint32_t event_id;
 	uint32_t log_code;
-	
+	/* For Central Routing, used to store SMD channel pointer */
 	uint32_t client_id;
 };
 
@@ -263,6 +290,7 @@ struct diag_ws_ref_t {
 	spinlock_t lock;
 };
 
+/* This structure is defined in USB header file */
 #ifndef CONFIG_DIAG_OVER_USB
 struct diag_request {
 	char *buf;
@@ -274,10 +302,10 @@ struct diag_request {
 #endif
 
 struct diag_smd_info {
-	int peripheral;	
-	int type;	
+	int peripheral;	/* The peripheral this smd channel communicates with */
+	int type;	/* The type of smd channel (data, control, dci) */
 	uint16_t peripheral_mask;
-	int encode_hdlc; 
+	int encode_hdlc; /* Whether data is raw and needs to be hdlc encoded */
 
 	smd_channel_t *ch;
 	smd_channel_t *ch_save;
@@ -314,13 +342,17 @@ struct diag_smd_info {
 	int general_context;
 	uint8_t inited;
 
+	/*
+	 * Function ptr for function to call to process the data that
+	 * was just read from the smd channel
+	 */
 	int (*process_smd_read_data)(struct diag_smd_info *smd_info,
 						void *buf, int num_bytes);
 };
 
 struct diagchar_dev {
 
-	
+	/* State for the char driver */
 	unsigned int major;
 	unsigned int minor_start;
 	int num;
@@ -342,16 +374,16 @@ struct diagchar_dev {
 	int use_device_tree;
 	int supports_separate_cmdrsp;
 	int supports_apps_hdlc_encoding;
-	
+	/* The state requested in the STM command */
 	int stm_state_requested[NUM_STM_PROCESSORS];
-	
+	/* The current STM state */
 	int stm_state[NUM_STM_PROCESSORS];
-	
+	/* Whether or not the peripheral supports STM */
 	int peripheral_supports_stm[NUM_SMD_CONTROL_CHANNELS];
-	
+	/* Delayed response Variables */
 	uint16_t delayed_rsp_id;
 	struct mutex delayed_rsp_mutex;
-	
+	/* DCI related variables */
 	struct list_head dci_req_list;
 	struct list_head dci_client_list;
 	int dci_tag;
@@ -381,7 +413,7 @@ struct diagchar_dev {
 	unsigned char *user_space_qsc_data;
 #endif
 
-	
+	/* Memory pool parameters */
 	unsigned int itemsize;
 	unsigned int poolsize;
 	unsigned int itemsize_hdlc;
@@ -393,7 +425,7 @@ struct diagchar_dev {
 	unsigned int itemsize_dci;
 	unsigned int poolsize_dci;
 	unsigned int debug_flag;
-	
+	/* State for the mempool for the char driver */
 	mempool_t *diagpool;
 	mempool_t *diag_hdlc_pool;
 	mempool_t *diag_user_pool;
@@ -406,19 +438,19 @@ struct diagchar_dev {
 	int count_write_struct_pool;
 	int count_dci_pool;
 	int used;
-	
+	/* Buffers for masks */
 	struct mutex diag_cntl_mutex;
 	struct diag_ctrl_event_mask *event_mask;
 	struct diag_ctrl_log_mask *log_mask;
 	struct diag_ctrl_msg_mask *msg_mask;
 	struct diag_ctrl_feature_mask *feature_mask;
 	struct mutex log_mask_mutex;
-	
+	/* Members for Sending response */
 	unsigned char *encoded_rsp_buf;
 	uint8_t rsp_buf_busy;
 	struct diag_request *rsp_write_ptr;
 	spinlock_t rsp_buf_busy_lock;
-	
+	/* State for diag forwarding */
 	struct diag_smd_info smd_data[NUM_SMD_DATA_CHANNELS];
 	struct diag_smd_info smd_cntl[NUM_SMD_CONTROL_CHANNELS];
 	struct diag_smd_info smd_dci[NUM_SMD_DCI_CHANNELS];
@@ -429,7 +461,7 @@ struct diagchar_dev {
 	unsigned char *usb_buf_out;
 	unsigned char *apps_rsp_buf;
 	unsigned char *user_space_data_buf;
-	
+	/* buffer for updating mask to peripherals */
 	unsigned char *buf_msg_mask_update;
 	unsigned char *buf_log_mask_update;
 	unsigned char *buf_event_mask_update;
@@ -440,7 +472,7 @@ struct diagchar_dev {
 	unsigned hdlc_count;
 	unsigned hdlc_escape;
 	int in_busy_pktdata;
-	
+	/* Variables for non real time mode */
 	int real_time_mode[DIAG_NUM_PROC];
 	int real_time_update_busy;
 	uint16_t proc_active_mask;
@@ -471,7 +503,7 @@ struct diagchar_dev {
 	struct diag_master_table *table;
 	uint8_t *pkt_buf;
 	int pkt_length;
-	uint8_t *dci_pkt_buf; 
+	uint8_t *dci_pkt_buf; /* For Apps DCI packets */
 	uint32_t dci_pkt_length;
 	int in_busy_dcipktdata;
 	struct diag_request *usb_read_ptr;
@@ -481,16 +513,16 @@ struct diagchar_dev {
 	int logging_process_id;
 	struct task_struct *socket_process;
 	struct task_struct *callback_process;
-	
+	/* Power related variables */
 	struct diag_ws_ref_t dci_ws;
 	struct diag_ws_ref_t md_ws;
 	spinlock_t ws_lock;
 
 #ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-	
+	/* common for all bridges */
 	struct work_struct diag_connect_work;
 	struct work_struct diag_disconnect_work;
-	
+	/* SGLTE variables */
 	int lcid;
 	unsigned char *buf_in_smux;
 	int in_busy_smux;
@@ -530,6 +562,7 @@ extern uint16_t wrap_count;
 #else
 #define    SMDDIAG_NAME "SMD_DIAG"
 #endif
+
 void diag_get_timestamp(char *time_str);
 int diag_find_polling_reg(int i);
 void check_drain_timer(void);

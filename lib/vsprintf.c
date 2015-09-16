@@ -4,10 +4,20 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  */
 
+/* vsprintf.c -- Lars Wirzenius & Linus Torvalds. */
+/*
+ * Wirzenius wrote this portably, Torvalds fucked it up :-)
+ */
 
+/*
+ * Fri Jul 13 2001 Crutcher Dunnavant <crutcher+kernel@datastacks.com>
+ * - changed to provide snprintf and vsnprintf functions
+ * So Feb  1 16:51:32 CET 2004 Juergen Quade <quade@hsnr.de>
+ * - scnprintf and vscnprintf
+ */
 
 #include <stdarg.h>
-#include <linux/module.h>	
+#include <linux/module.h>	/* for KSYM_SYMBOL_LEN */
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/ctype.h>
@@ -19,11 +29,19 @@
 #include <linux/cred.h>
 #include <net/addrconf.h>
 
-#include <asm/page.h>		
-#include <asm/sections.h>	
+#include <asm/page.h>		/* for PAGE_SIZE */
+#include <asm/sections.h>	/* for dereference_function_descriptor() */
 
 #include "kstrtox.h"
 
+/**
+ * simple_strtoull - convert a string to an unsigned long long
+ * @cp: The start of the string
+ * @endp: A pointer to the end of the parsed string will be placed here
+ * @base: The number base to use
+ *
+ * This function is obsolete. Please use kstrtoull instead.
+ */
 unsigned long long simple_strtoull(const char *cp, char **endp, unsigned int base)
 {
 	unsigned long long result;
@@ -31,7 +49,7 @@ unsigned long long simple_strtoull(const char *cp, char **endp, unsigned int bas
 
 	cp = _parse_integer_fixup_radix(cp, &base);
 	rv = _parse_integer(cp, base, &result);
-	
+	/* FIXME */
 	cp += (rv & ~KSTRTOX_OVERFLOW);
 
 	if (endp)
@@ -41,12 +59,28 @@ unsigned long long simple_strtoull(const char *cp, char **endp, unsigned int bas
 }
 EXPORT_SYMBOL(simple_strtoull);
 
+/**
+ * simple_strtoul - convert a string to an unsigned long
+ * @cp: The start of the string
+ * @endp: A pointer to the end of the parsed string will be placed here
+ * @base: The number base to use
+ *
+ * This function is obsolete. Please use kstrtoul instead.
+ */
 unsigned long simple_strtoul(const char *cp, char **endp, unsigned int base)
 {
 	return simple_strtoull(cp, endp, base);
 }
 EXPORT_SYMBOL(simple_strtoul);
 
+/**
+ * simple_strtol - convert a string to a signed long
+ * @cp: The start of the string
+ * @endp: A pointer to the end of the parsed string will be placed here
+ * @base: The number base to use
+ *
+ * This function is obsolete. Please use kstrtol instead.
+ */
 long simple_strtol(const char *cp, char **endp, unsigned int base)
 {
 	if (*cp == '-')
@@ -56,6 +90,14 @@ long simple_strtol(const char *cp, char **endp, unsigned int base)
 }
 EXPORT_SYMBOL(simple_strtol);
 
+/**
+ * simple_strtoll - convert a string to a signed long long
+ * @cp: The start of the string
+ * @endp: A pointer to the end of the parsed string will be placed here
+ * @base: The number base to use
+ *
+ * This function is obsolete. Please use kstrtoll instead.
+ */
 long long simple_strtoll(const char *cp, char **endp, unsigned int base)
 {
 	if (*cp == '-')
@@ -76,66 +118,113 @@ int skip_atoi(const char **s)
 	return i;
 }
 
+/* Decimal conversion is by far the most typical, and is used
+ * for /proc and /sys data. This directly impacts e.g. top performance
+ * with many processes running. We optimize it for speed
+ * using ideas described at <http://www.cs.uiowa.edu/~jones/bcd/divide.html>
+ * (with permission from the author, Douglas W. Jones).
+ */
 
 #if BITS_PER_LONG != 32 || BITS_PER_LONG_LONG != 64
+/* Formats correctly any integer in [0, 999999999] */
 static noinline_for_stack
 char *put_dec_full9(char *buf, unsigned q)
 {
 	unsigned r;
 
+	/*
+	 * Possible ways to approx. divide by 10
+	 * (x * 0x1999999a) >> 32 x < 1073741829 (multiply must be 64-bit)
+	 * (x * 0xcccd) >> 19     x <      81920 (x < 262149 when 64-bit mul)
+	 * (x * 0x6667) >> 18     x <      43699
+	 * (x * 0x3334) >> 17     x <      16389
+	 * (x * 0x199a) >> 16     x <      16389
+	 * (x * 0x0ccd) >> 15     x <      16389
+	 * (x * 0x0667) >> 14     x <       2739
+	 * (x * 0x0334) >> 13     x <       1029
+	 * (x * 0x019a) >> 12     x <       1029
+	 * (x * 0x00cd) >> 11     x <       1029 shorter code than * 0x67 (on i386)
+	 * (x * 0x0067) >> 10     x <        179
+	 * (x * 0x0034) >>  9     x <         69 same
+	 * (x * 0x001a) >>  8     x <         69 same
+	 * (x * 0x000d) >>  7     x <         69 same, shortest code (on i386)
+	 * (x * 0x0007) >>  6     x <         19
+	 * See <http://www.cs.uiowa.edu/~jones/bcd/divide.html>
+	 */
 	r      = (q * (uint64_t)0x1999999a) >> 32;
-	*buf++ = (q - 10 * r) + '0'; 
+	*buf++ = (q - 10 * r) + '0'; /* 1 */
 	q      = (r * (uint64_t)0x1999999a) >> 32;
-	*buf++ = (r - 10 * q) + '0'; 
+	*buf++ = (r - 10 * q) + '0'; /* 2 */
 	r      = (q * (uint64_t)0x1999999a) >> 32;
-	*buf++ = (q - 10 * r) + '0'; 
+	*buf++ = (q - 10 * r) + '0'; /* 3 */
 	q      = (r * (uint64_t)0x1999999a) >> 32;
-	*buf++ = (r - 10 * q) + '0'; 
+	*buf++ = (r - 10 * q) + '0'; /* 4 */
 	r      = (q * (uint64_t)0x1999999a) >> 32;
-	*buf++ = (q - 10 * r) + '0'; 
-	
+	*buf++ = (q - 10 * r) + '0'; /* 5 */
+	/* Now value is under 10000, can avoid 64-bit multiply */
 	q      = (r * 0x199a) >> 16;
-	*buf++ = (r - 10 * q)  + '0'; 
+	*buf++ = (r - 10 * q)  + '0'; /* 6 */
 	r      = (q * 0xcd) >> 11;
-	*buf++ = (q - 10 * r)  + '0'; 
+	*buf++ = (q - 10 * r)  + '0'; /* 7 */
 	q      = (r * 0xcd) >> 11;
-	*buf++ = (r - 10 * q) + '0'; 
-	*buf++ = q + '0'; 
+	*buf++ = (r - 10 * q) + '0'; /* 8 */
+	*buf++ = q + '0'; /* 9 */
 	return buf;
 }
 #endif
 
+/* Similar to above but do not pad with zeros.
+ * Code can be easily arranged to print 9 digits too, but our callers
+ * always call put_dec_full9() instead when the number has 9 decimal digits.
+ */
 static noinline_for_stack
 char *put_dec_trunc8(char *buf, unsigned r)
 {
 	unsigned q;
 
-	
+	/* Copy of previous function's body with added early returns */
 	while (r >= 10000) {
 		q = r + '0';
 		r  = (r * (uint64_t)0x1999999a) >> 32;
 		*buf++ = q - 10*r;
 	}
 
-	q      = (r * 0x199a) >> 16;	
+	q      = (r * 0x199a) >> 16;	/* r <= 9999 */
 	*buf++ = (r - 10 * q)  + '0';
 	if (q == 0)
 		return buf;
-	r      = (q * 0xcd) >> 11;	
+	r      = (q * 0xcd) >> 11;	/* q <= 999 */
 	*buf++ = (q - 10 * r)  + '0';
 	if (r == 0)
 		return buf;
-	q      = (r * 0xcd) >> 11;	
+	q      = (r * 0xcd) >> 11;	/* r <= 99 */
 	*buf++ = (r - 10 * q) + '0';
 	if (q == 0)
 		return buf;
-	*buf++ = q + '0';		 
+	*buf++ = q + '0';		 /* q <= 9 */
 	return buf;
 }
 
+/* There are two algorithms to print larger numbers.
+ * One is generic: divide by 1000000000 and repeatedly print
+ * groups of (up to) 9 digits. It's conceptually simple,
+ * but requires a (unsigned long long) / 1000000000 division.
+ *
+ * Second algorithm splits 64-bit unsigned long long into 16-bit chunks,
+ * manipulates them cleverly and generates groups of 4 decimal digits.
+ * It so happens that it does NOT require long long division.
+ *
+ * If long is > 32 bits, division of 64-bit values is relatively easy,
+ * and we will use the first algorithm.
+ * If long long is > 64 bits (strange architecture with VERY large long long),
+ * second algorithm can't be used, and we again use the first one.
+ *
+ * Else (if long is 32 bits and long long is 64 bits) we use second one.
+ */
 
 #if BITS_PER_LONG != 32 || BITS_PER_LONG_LONG != 64
 
+/* First algorithm: generic */
 
 static
 char *put_dec(char *buf, unsigned long long n)
@@ -151,7 +240,9 @@ char *put_dec(char *buf, unsigned long long n)
 
 #else
 
+/* Second algorithm: valid only for 64-bit long longs */
 
+/* See comment in put_dec_full9 for choice of constants */
 static noinline_for_stack
 void put_dec_full4(char *buf, unsigned q)
 {
@@ -165,6 +256,13 @@ void put_dec_full4(char *buf, unsigned q)
 	buf[3] = r + '0';
 }
 
+/*
+ * Call put_dec_full4 on x % 10000, return x / 10000.
+ * The approximation x/10000 == (x * 0x346DC5D7) >> 43
+ * holds for all x < 1,128,869,999.  The largest value this
+ * helper will ever be asked to convert is 1,125,520,955.
+ * (d1 in the put_dec code, assuming n is all-ones).
+ */
 static
 unsigned put_dec_helper4(char *buf, unsigned x)
 {
@@ -174,6 +272,11 @@ unsigned put_dec_helper4(char *buf, unsigned x)
         return q;
 }
 
+/* Based on code by Douglas W. Jones found at
+ * <http://www.cs.uiowa.edu/~jones/bcd/decimal.html#sixtyfour>
+ * (with permission from the author).
+ * Performs no 64-bit division and hence should be fast on 32-bit machines.
+ */
 static
 char *put_dec(char *buf, unsigned long long n)
 {
@@ -182,10 +285,10 @@ char *put_dec(char *buf, unsigned long long n)
 	if (n < 100*1000*1000)
 		return put_dec_trunc8(buf, n);
 
-	d1  = ((uint32_t)n >> 16); 
+	d1  = ((uint32_t)n >> 16); /* implicit "& 0xffff" */
 	h   = (n >> 32);
 	d2  = (h      ) & 0xffff;
-	d3  = (h >> 16); 
+	d3  = (h >> 16); /* implicit "& 0xffff" */
 
 	q   = 656 * d3 + 7296 * d2 + 5536 * d1 + ((uint32_t)n & 0xffff);
 	q = put_dec_helper4(buf, q);
@@ -208,12 +311,18 @@ char *put_dec(char *buf, unsigned long long n)
 
 #endif
 
+/*
+ * Convert passed number to decimal string.
+ * Returns the length of string.  On buffer overflow, returns 0.
+ *
+ * If speed is not important, use snprintf(). It's easy to read the code.
+ */
 int num_to_str(char *buf, int size, unsigned long long num)
 {
 	char tmp[sizeof(num) * 3];
 	int idx, len;
 
-	
+	/* put_dec() may work incorrectly for num = 0 (generate "", not "0") */
 	if (num <= 9) {
 		tmp[0] = '0' + num;
 		len = 1;
@@ -228,16 +337,16 @@ int num_to_str(char *buf, int size, unsigned long long num)
 	return len;
 }
 
-#define ZEROPAD	1		
-#define SIGN	2		
-#define PLUS	4		
-#define SPACE	8		
-#define LEFT	16		
-#define SMALL	32		
-#define SPECIAL	64		
+#define ZEROPAD	1		/* pad with zero */
+#define SIGN	2		/* unsigned/signed long */
+#define PLUS	4		/* show plus */
+#define SPACE	8		/* space if plus */
+#define LEFT	16		/* left justified */
+#define SMALL	32		/* use lowercase in hex (must be 32 == 0x20) */
+#define SPECIAL	64		/* prefix hex with "0x", octal with "0" */
 
 enum format_type {
-	FORMAT_TYPE_NONE, 
+	FORMAT_TYPE_NONE, /* Just a string part */
 	FORMAT_TYPE_WIDTH,
 	FORMAT_TYPE_PRECISION,
 	FORMAT_TYPE_CHAR,
@@ -260,20 +369,20 @@ enum format_type {
 };
 
 struct printf_spec {
-	u8	type;		
-	u8	flags;		
-	u8	base;		
-	u8	qualifier;	
-	s16	field_width;	
-	s16	precision;	
+	u8	type;		/* format_type enum */
+	u8	flags;		/* flags to number() */
+	u8	base;		/* number base, 8, 10 or 16 only */
+	u8	qualifier;	/* number qualifier, one of 'hHlLtzZ' */
+	s16	field_width;	/* width of output field */
+	s16	precision;	/* # of digits/chars */
 };
 
 static noinline_for_stack
 char *number(char *buf, char *end, unsigned long long num,
 	     struct printf_spec spec)
 {
-	
-	static const char digits[16] = "0123456789ABCDEF"; 
+	/* we are called with base 8, 10 or 16, only, thus don't need "G..."  */
+	static const char digits[16] = "0123456789ABCDEF"; /* "GHIJKLMNOPQRSTUVWXYZ"; */
 
 	char tmp[66];
 	char sign;
@@ -282,6 +391,8 @@ char *number(char *buf, char *end, unsigned long long num,
 	int i;
 	bool is_zero = num == 0LL;
 
+	/* locase = 0 or 0x20. ORing digits or letters with 'locase'
+	 * produces same digits or (maybe lowercased) letters */
 	locase = (spec.flags & SMALL);
 	if (spec.flags & LEFT)
 		spec.flags &= ~ZEROPAD;
@@ -306,11 +417,16 @@ char *number(char *buf, char *end, unsigned long long num,
 			spec.field_width--;
 	}
 
-	
+	/* generate full string in tmp[], in reverse order */
 	i = 0;
 	if (num < spec.base)
 		tmp[i++] = digits[num] | locase;
-	else if (spec.base != 10) { 
+	/* Generic code, for any base:
+	else do {
+		tmp[i++] = (digits[do_div(num,base)] | locase);
+	} while (num != 0);
+	*/
+	else if (spec.base != 10) { /* 8 or 16 */
 		int mask = spec.base - 1;
 		int shift = 3;
 
@@ -320,14 +436,14 @@ char *number(char *buf, char *end, unsigned long long num,
 			tmp[i++] = (digits[((unsigned char)num) & mask] | locase);
 			num >>= shift;
 		} while (num);
-	} else { 
+	} else { /* base 10 */
 		i = put_dec(tmp, num) - tmp;
 	}
 
-	
+	/* printing 100 using %2d gives "100", not "00" */
 	if (i > spec.precision)
 		spec.precision = i;
-	
+	/* leading space padding */
 	spec.field_width -= spec.precision;
 	if (!(spec.flags & (ZEROPAD+LEFT))) {
 		while (--spec.field_width >= 0) {
@@ -336,13 +452,13 @@ char *number(char *buf, char *end, unsigned long long num,
 			++buf;
 		}
 	}
-	
+	/* sign */
 	if (sign) {
 		if (buf < end)
 			*buf = sign;
 		++buf;
 	}
-	
+	/* "0x" / "0" prefix */
 	if (need_pfx) {
 		if (spec.base == 16 || !is_zero) {
 			if (buf < end)
@@ -355,7 +471,7 @@ char *number(char *buf, char *end, unsigned long long num,
 			++buf;
 		}
 	}
-	
+	/* zero or space padding */
 	if (!(spec.flags & LEFT)) {
 		char c = (spec.flags & ZEROPAD) ? '0' : ' ';
 		while (--spec.field_width >= 0) {
@@ -364,19 +480,19 @@ char *number(char *buf, char *end, unsigned long long num,
 			++buf;
 		}
 	}
-	
+	/* hmm even more zero padding? */
 	while (i <= --spec.precision) {
 		if (buf < end)
 			*buf = '0';
 		++buf;
 	}
-	
+	/* actual digits of result */
 	while (--i >= 0) {
 		if (buf < end)
 			*buf = tmp[i];
 		++buf;
 	}
-	
+	/* trailing space padding */
 	while (--spec.field_width >= 0) {
 		if (buf < end)
 			*buf = ' ';
@@ -493,6 +609,8 @@ char *resource_string(char *buf, char *end, struct resource *res,
 		.flags = SPECIAL | SMALL,
 	};
 
+	/* 32-bit res (sizeof==4): 10 chars in dec, 10 in hex ("0x" + 8)
+	 * 64-bit res (sizeof==8): 20 chars in dec, 18 in hex ("0x" + 16) */
 #define RSRC_BUF_SIZE		((2 * sizeof(resource_size_t)) + 4)
 #define FLAG_BUF_SIZE		(2 * sizeof(res->flags))
 #define DECODED_BUF_SIZE	sizeof("[mem - 64bit pref window disabled]")
@@ -553,15 +671,16 @@ static noinline_for_stack
 char *hex_string(char *buf, char *end, u8 *addr, struct printf_spec spec,
 		 const char *fmt)
 {
-	int i, len = 1;		
+	int i, len = 1;		/* if we pass '%ph[CDN]', field witdh remains
+				   negative value, fallback to the default */
 	char separator;
 
 	if (spec.field_width == 0)
-		
+		/* nothing to print */
 		return buf;
 
 	if (ZERO_OR_NULL_PTR(addr))
-		
+		/* NULL pointer */
 		return string(buf, end, NULL, spec);
 
 	switch (fmt[1]) {
@@ -609,7 +728,7 @@ char *mac_address_string(char *buf, char *end, u8 *addr,
 
 	case 'R':
 		reversed = true;
-		
+		/* fall through */
 
 	default:
 		separator = ':';
@@ -660,7 +779,7 @@ char *ip4_string(char *p, const u8 *addr, const char *fmt)
 		break;
 	}
 	for (i = 0; i < 4; i++) {
-		char temp[3];	
+		char temp[3];	/* hold each IP quad in reverse order */
 		int digits = put_dec_trunc8(temp, addr[index]) - temp;
 		if (leading_zeros) {
 			if (digits < 3)
@@ -668,7 +787,7 @@ char *ip4_string(char *p, const u8 *addr, const char *fmt)
 			if (digits < 2)
 				*p++ = '0';
 		}
-		
+		/* reverse the digits in the quad */
 		while (digits--)
 			*p++ = temp[digits];
 		if (i < 3)
@@ -704,7 +823,7 @@ char *ip6_compressed_string(char *p, const char *addr)
 	else
 		range = 8;
 
-	
+	/* find position of longest 0 run */
 	for (i = 0; i < range; i++) {
 		for (j = i; j < range; j++) {
 			if (in6.s6_addr16[j] != 0)
@@ -718,10 +837,10 @@ char *ip6_compressed_string(char *p, const char *addr)
 			colonpos = i;
 		}
 	}
-	if (longest == 1)		
+	if (longest == 1)		/* don't compress a single 0 */
 		colonpos = -1;
 
-	
+	/* emit address */
 	for (i = 0; i < range; i++) {
 		if (i == colonpos) {
 			if (needcolon || i == 0)
@@ -735,7 +854,7 @@ char *ip6_compressed_string(char *p, const char *addr)
 			*p++ = ':';
 			needcolon = false;
 		}
-		
+		/* hex u16 without leading 0s */
 		word = ntohs(in6.s6_addr16[i]);
 		hi = word >> 8;
 		lo = word & 0xff;
@@ -818,7 +937,7 @@ char *uuid_string(char *buf, char *end, const u8 *addr,
 
 	switch (*(++fmt)) {
 	case 'L':
-		uc = true;		
+		uc = true;		/* fall-through */
 	case 'l':
 		index = le;
 		break;
@@ -865,6 +984,67 @@ char *netdev_feature_string(char *buf, char *end, const u8 *addr,
 
 int kptr_restrict __read_mostly;
 
+/*
+ * Show a '%p' thing.  A kernel extension is that the '%p' is followed
+ * by an extra set of alphanumeric characters that are extended format
+ * specifiers.
+ *
+ * Right now we handle:
+ *
+ * - 'F' For symbolic function descriptor pointers with offset
+ * - 'f' For simple symbolic function names without offset
+ * - 'S' For symbolic direct pointers with offset
+ * - 's' For symbolic direct pointers without offset
+ * - '[FfSs]R' as above with __builtin_extract_return_addr() translation
+ * - 'B' For backtraced symbolic direct pointers with offset
+ * - 'R' For decoded struct resource, e.g., [mem 0x0-0x1f 64bit pref]
+ * - 'r' For raw struct resource, e.g., [mem 0x0-0x1f flags 0x201]
+ * - 'M' For a 6-byte MAC address, it prints the address in the
+ *       usual colon-separated hex notation
+ * - 'm' For a 6-byte MAC address, it prints the hex address without colons
+ * - 'MF' For a 6-byte MAC FDDI address, it prints the address
+ *       with a dash-separated hex notation
+ * - '[mM]R' For a 6-byte MAC address, Reverse order (Bluetooth)
+ * - 'I' [46] for IPv4/IPv6 addresses printed in the usual way
+ *       IPv4 uses dot-separated decimal without leading 0's (1.2.3.4)
+ *       IPv6 uses colon separated network-order 16 bit hex with leading 0's
+ * - 'i' [46] for 'raw' IPv4/IPv6 addresses
+ *       IPv6 omits the colons (01020304...0f)
+ *       IPv4 uses dot-separated decimal with leading 0's (010.123.045.006)
+ * - '[Ii]4[hnbl]' IPv4 addresses in host, network, big or little endian order
+ * - 'I6c' for IPv6 addresses printed as specified by
+ *       http://tools.ietf.org/html/rfc5952
+ * - 'U' For a 16 byte UUID/GUID, it prints the UUID/GUID in the form
+ *       "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+ *       Options for %pU are:
+ *         b big endian lower case hex (default)
+ *         B big endian UPPER case hex
+ *         l little endian lower case hex
+ *         L little endian UPPER case hex
+ *           big endian output byte order is:
+ *             [0][1][2][3]-[4][5]-[6][7]-[8][9]-[10][11][12][13][14][15]
+ *           little endian output byte order is:
+ *             [3][2][1][0]-[5][4]-[7][6]-[8][9]-[10][11][12][13][14][15]
+ * - 'V' For a struct va_format which contains a format string * and va_list *,
+ *       call vsnprintf(->format, *->va_list).
+ *       Implements a "recursive vsnprintf".
+ *       Do not use this feature without some mechanism to verify the
+ *       correctness of the format string and va_list arguments.
+ * - 'K' For a kernel pointer that should be hidden from unprivileged users
+ * - 'NF' For a netdev_features_t
+ * - 'h[CDN]' For a variable-length buffer, it prints it as a hex string with
+ *            a certain separator (' ' by default):
+ *              C colon
+ *              D dash
+ *              N no separator
+ *            The maximum supported length is 64 bytes of the input. Consider
+ *            to use print_hex_dump() for the larger input.
+ * - 'a' For a phys_addr_t type and its derivative types (passed by reference)
+ *
+ * Note: The difference between 'S' and 'F' is that on ia64 and ppc64
+ * function pointers are really function descriptors, which contain a
+ * pointer to the real address.
+ */
 static noinline_for_stack
 char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 	      struct printf_spec spec)
@@ -872,6 +1052,10 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 	int default_width = 2 * sizeof(void *) + (spec.flags & SPECIAL ? 2 : 0);
 
 	if (!ptr && *fmt != 'K') {
+		/*
+		 * Print (null) with the same width as a pointer so it makes
+		 * tabular output look nice.
+		 */
 		if (spec.field_width == -1)
 			spec.field_width = default_width;
 		return string(buf, end, "(null)", spec);
@@ -881,7 +1065,7 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 	case 'F':
 	case 'f':
 		ptr = dereference_function_descriptor(ptr);
-		
+		/* Fallthrough */
 	case 'S':
 	case 's':
 	case 'B':
@@ -891,13 +1075,20 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 		return resource_string(buf, end, ptr, spec, fmt);
 	case 'h':
 		return hex_string(buf, end, ptr, spec, fmt);
-	case 'M':			
-	case 'm':			
-					
-					
+	case 'M':			/* Colon separated: 00:01:02:03:04:05 */
+	case 'm':			/* Contiguous: 000102030405 */
+					/* [mM]F (FDDI) */
+					/* [mM]R (Reverse order; Bluetooth) */
 		return mac_address_string(buf, end, ptr, spec, fmt);
-	case 'I':			
-	case 'i':			
+	case 'I':			/* Formatted IP supported
+					 * 4:	1.2.3.4
+					 * 6:	0001:0203:...:0708
+					 * 6c:	1::708 or 1::1.2.3.4
+					 */
+	case 'i':			/* Contiguous:
+					 * 4:	001.002.003.004
+					 * 6:   000102...0f
+					 */
 		switch (fmt[1]) {
 		case '6':
 			return ip6_addr_string(buf, end, ptr, spec, fmt);
@@ -918,6 +1109,10 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 			return buf;
 		}
 	case 'K':
+		/*
+		 * %pK cannot be used in IRQ context because its test
+		 * for CAP_SYSLOG would be meaningless.
+		 */
 		if (kptr_restrict && (in_irq() || in_serving_softirq() ||
 				      in_nmi())) {
 			if (spec.field_width == -1)
@@ -927,9 +1122,18 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 
 		switch (kptr_restrict) {
 		case 0:
-			
+			/* Always print %pK values */
 			break;
 		case 1: {
+			/*
+			 * Only print the real pointer value if the current
+			 * process has CAP_SYSLOG and is running with the
+			 * same credentials it started with. This is because
+			 * access to files is checked at open() time, but %pK
+			 * checks permission at read() time. We don't want to
+			 * leak pointer values if a binary opens a file using
+			 * %pK and then elevates privileges before reading it.
+			 */
 			const struct cred *cred = current_cred();
 
 			if (!has_capability_noaudit(current, CAP_SYSLOG) ||
@@ -940,7 +1144,7 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 		}
 		case 2:
 		default:
-			
+			/* Always print 0's for %pK */
 			ptr = NULL;
 			break;
 		}
@@ -994,7 +1198,7 @@ int format_decode(const char *fmt, struct printf_spec *spec)
 {
 	const char *start = fmt;
 
-	
+	/* we finished early by reading the field width */
 	if (spec->type == FORMAT_TYPE_WIDTH) {
 		if (spec->field_width < 0) {
 			spec->field_width = -spec->field_width;
@@ -1004,7 +1208,7 @@ int format_decode(const char *fmt, struct printf_spec *spec)
 		goto precision;
 	}
 
-	
+	/* we finished early by reading the precision */
 	if (spec->type == FORMAT_TYPE_PRECISION) {
 		if (spec->precision < 0)
 			spec->precision = 0;
@@ -1013,7 +1217,7 @@ int format_decode(const char *fmt, struct printf_spec *spec)
 		goto qualifier;
 	}
 
-	
+	/* By default */
 	spec->type = FORMAT_TYPE_NONE;
 
 	for (; *fmt ; ++fmt) {
@@ -1021,14 +1225,14 @@ int format_decode(const char *fmt, struct printf_spec *spec)
 			break;
 	}
 
-	
+	/* Return the current non-format string */
 	if (fmt != start || !*fmt)
 		return fmt - start;
 
-	
+	/* Process flags */
 	spec->flags = 0;
 
-	while (1) { 
+	while (1) { /* this also skips first '%' */
 		bool found = true;
 
 		++fmt;
@@ -1046,19 +1250,19 @@ int format_decode(const char *fmt, struct printf_spec *spec)
 			break;
 	}
 
-	
+	/* get field width */
 	spec->field_width = -1;
 
 	if (isdigit(*fmt))
 		spec->field_width = skip_atoi(&fmt);
 	else if (*fmt == '*') {
-		
+		/* it's the next argument */
 		spec->type = FORMAT_TYPE_WIDTH;
 		return ++fmt - start;
 	}
 
 precision:
-	
+	/* get the precision */
 	spec->precision = -1;
 	if (*fmt == '.') {
 		++fmt;
@@ -1067,14 +1271,14 @@ precision:
 			if (spec->precision < 0)
 				spec->precision = 0;
 		} else if (*fmt == '*') {
-			
+			/* it's the next argument */
 			spec->type = FORMAT_TYPE_PRECISION;
 			return ++fmt - start;
 		}
 	}
 
 qualifier:
-	
+	/* get the conversion qualifier */
 	spec->qualifier = -1;
 	if (*fmt == 'h' || _tolower(*fmt) == 'l' ||
 	    _tolower(*fmt) == 'z' || *fmt == 't') {
@@ -1090,7 +1294,7 @@ qualifier:
 		}
 	}
 
-	
+	/* default base */
 	spec->base = 10;
 	switch (*fmt) {
 	case 'c':
@@ -1104,7 +1308,7 @@ qualifier:
 	case 'p':
 		spec->type = FORMAT_TYPE_PTR;
 		return fmt - start;
-		
+		/* skip alnum */
 
 	case 'n':
 		spec->type = FORMAT_TYPE_NRCHARS;
@@ -1114,7 +1318,7 @@ qualifier:
 		spec->type = FORMAT_TYPE_PERCENT_CHAR;
 		return ++fmt - start;
 
-	
+	/* integer number formats - set up the flags and "break" */
 	case 'o':
 		spec->base = 8;
 		break;
@@ -1217,13 +1421,15 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 	char *str, *end;
 	struct printf_spec spec = {0};
 
+	/* Reject out-of-range values early.  Large positive sizes are
+	   used for unknown buffer sizes. */
 	if (WARN_ON_ONCE((int) size < 0))
 		return 0;
 
 	str = buf;
 	end = buf + size;
 
-	
+	/* Make sure end is always >= buf */
 	if (end < buf) {
 		end = ((void *)-1);
 		size = end - buf;
@@ -1367,7 +1573,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 			end[-1] = '\0';
 	}
 
-	
+	/* the trailing null byte doesn't count towards the total */
 	return str-buf;
 
 }
@@ -1402,6 +1608,20 @@ int vscnprintf(char *buf, size_t size, const char *fmt, va_list args)
 }
 EXPORT_SYMBOL(vscnprintf);
 
+/**
+ * snprintf - Format a string and place it in a buffer
+ * @buf: The buffer to place the result into
+ * @size: The size of the buffer, including the trailing null space
+ * @fmt: The format string to use
+ * @...: Arguments for the format string
+ *
+ * The return value is the number of characters which would be
+ * generated for the given input, excluding the trailing null,
+ * as per ISO C99.  If the return is greater than or equal to
+ * @size, the resulting string is truncated.
+ *
+ * See the vsnprintf() documentation for format string extensions over C99.
+ */
 int snprintf(char *buf, size_t size, const char *fmt, ...)
 {
 	va_list args;
@@ -1485,7 +1705,29 @@ int sprintf(char *buf, const char *fmt, ...)
 EXPORT_SYMBOL(sprintf);
 
 #ifdef CONFIG_BINARY_PRINTF
+/*
+ * bprintf service:
+ * vbin_printf() - VA arguments to binary data
+ * bstr_printf() - Binary data to text string
+ */
 
+/**
+ * vbin_printf - Parse a format string and place args' binary value in a buffer
+ * @bin_buf: The buffer to place args' binary value
+ * @size: The size of the buffer(by words(32bits), not characters)
+ * @fmt: The format string to use
+ * @args: Arguments for the format string
+ *
+ * The format follows C99 vsnprintf, except %n is ignored, and its argument
+ * is skiped.
+ *
+ * The return value is the number of words(32bits) which would be generated for
+ * the given input.
+ *
+ * NOTE:
+ * If the return value is greater than @size, the resulting bin_buf is NOT
+ * valid for bstr_printf().
+ */
 int vbin_printf(u32 *bin_buf, size_t size, const char *fmt, va_list args)
 {
 	struct printf_spec spec = {0};
@@ -1550,13 +1792,13 @@ do {									\
 
 		case FORMAT_TYPE_PTR:
 			save_arg(void *);
-			
+			/* skip all alphanumeric pointer suffixes */
 			while (isalnum(*fmt))
 				fmt++;
 			break;
 
 		case FORMAT_TYPE_NRCHARS: {
-			
+			/* skip %n 's argument */
 			u8 qualifier = spec.qualifier;
 			void *skip_arg;
 			if (qualifier == 'l')
@@ -1652,7 +1894,7 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 	value;								\
 })
 
-	
+	/* Make sure end is always >= buf */
 	if (end < buf) {
 		end = ((void *)-1);
 		size = end - buf;
@@ -1727,7 +1969,7 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 			break;
 
 		case FORMAT_TYPE_NRCHARS:
-			
+			/* skip */
 			break;
 
 		default: {
@@ -1768,9 +2010,9 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 			}
 
 			str = number(str, end, num, spec);
-		} 
-		} 
-	} 
+		} /* default: */
+		} /* switch(spec.type) */
+	} /* while(*fmt) */
 
 	if (size > 0) {
 		if (str < end)
@@ -1781,7 +2023,7 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 
 #undef get_arg
 
-	
+	/* the trailing null byte doesn't count towards the total */
 	return str - buf;
 }
 EXPORT_SYMBOL_GPL(bstr_printf);
@@ -1809,8 +2051,14 @@ int bprintf(u32 *bin_buf, size_t size, const char *fmt, ...)
 }
 EXPORT_SYMBOL_GPL(bprintf);
 
-#endif 
+#endif /* CONFIG_BINARY_PRINTF */
 
+/**
+ * vsscanf - Unformat a buffer into a list of arguments
+ * @buf:	input buffer
+ * @fmt:	format of buffer
+ * @args:	arguments
+ */
 int vsscanf(const char *buf, const char *fmt, va_list args)
 {
 	const char *str = buf;
@@ -1827,13 +2075,16 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 	bool is_sign;
 
 	while (*fmt) {
-		
+		/* skip any white space in format */
+		/* white space in format matchs any amount of
+		 * white space, including none, in the input.
+		 */
 		if (isspace(*fmt)) {
 			fmt = skip_spaces(++fmt);
 			str = skip_spaces(str);
 		}
 
-		
+		/* anything that is not a conversion must match exactly */
 		if (*fmt != '%' && *fmt) {
 			if (*fmt++ != *str++)
 				break;
@@ -1844,6 +2095,9 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 			break;
 		++fmt;
 
+		/* skip this conversion.
+		 * advance both strings to next white space
+		 */
 		if (*fmt == '*') {
 			if (!*str)
 				break;
@@ -1854,7 +2108,7 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 			continue;
 		}
 
-		
+		/* get field width */
 		field_width = -1;
 		if (isdigit(*fmt)) {
 			field_width = skip_atoi(&fmt);
@@ -1862,7 +2116,7 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 				break;
 		}
 
-		
+		/* get conversion qualifier */
 		qualifier = -1;
 		if (*fmt == 'h' || _tolower(*fmt) == 'l' ||
 		    _tolower(*fmt) == 'z') {
@@ -1882,7 +2136,7 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 			break;
 
 		if (*fmt == 'n') {
-			
+			/* return number of characters read so far */
 			*va_arg(args, int *) = str - buf;
 			++fmt;
 			continue;
@@ -1911,10 +2165,10 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 			char *s = (char *)va_arg(args, char *);
 			if (field_width == -1)
 				field_width = SHRT_MAX;
-			
+			/* first, skip leading white space in buffer */
 			str = skip_spaces(str);
 
-			
+			/* now copy until next white space */
 			while (*str && !isspace(*str) && field_width--)
 				*s++ = *str++;
 			*s = '\0';
@@ -1935,15 +2189,18 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 		case 'u':
 			break;
 		case '%':
-			
+			/* looking for '%' in str */
 			if (*str++ != '%')
 				return num;
 			continue;
 		default:
-			
+			/* invalid format; stop here */
 			return num;
 		}
 
+		/* have some sort of integer conversion.
+		 * first, skip white space in buffer.
+		 */
 		str = skip_spaces(str);
 
 		digit = *str;
@@ -1979,7 +2236,7 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 		}
 
 		switch (qualifier) {
-		case 'H':	
+		case 'H':	/* that's 'hh' in format */
 			if (is_sign)
 				*va_arg(args, signed char *) = val.s;
 			else
@@ -2025,6 +2282,12 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 }
 EXPORT_SYMBOL(vsscanf);
 
+/**
+ * sscanf - Unformat a buffer into a list of arguments
+ * @buf:	input buffer
+ * @fmt:	formatting of buffer
+ * @...:	resulting arguments
+ */
 int sscanf(const char *buf, const char *fmt, ...)
 {
 	va_list args;

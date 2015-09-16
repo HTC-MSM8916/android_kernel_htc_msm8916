@@ -25,6 +25,7 @@
 #define FLASH_NAME "camera-led-flash"
 #define CAM_FLASH_PINCTRL_STATE_SLEEP "cam_flash_suspend"
 #define CAM_FLASH_PINCTRL_STATE_DEFAULT "cam_flash_default"
+/*#define CONFIG_MSMB_CAMERA_DEBUG*/
 #undef CDBG
 #ifdef CONFIG_MSMB_CAMERA_DEBUG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
@@ -147,7 +148,7 @@ int msm_flash_led_init(struct msm_led_flash_ctrl_t *fctrl)
 			power_info->gpio_conf->cam_gpiomux_conf_tbl_size);
 	}
 
-	
+	/* CCI Init */
 	if (fctrl->flash_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		rc = fctrl->flash_i2c_client->i2c_func_tbl->i2c_util(
 			fctrl->flash_i2c_client, MSM_CCI_INIT);
@@ -210,10 +211,8 @@ int msm_flash_led_release(struct msm_led_flash_ctrl_t *fctrl)
 	struct msm_camera_sensor_board_info *flashdata = NULL;
 	struct msm_camera_power_ctrl_t *power_info = NULL;
 
-        
-        
-        
-
+	flashdata = fctrl->flashdata;
+	power_info = &flashdata->power_info;
 	CDBG("%s:%d called\n", __func__, __LINE__);
 	if (!fctrl) {
 		pr_err("%s:%d fctrl NULL\n", __func__, __LINE__);
@@ -224,10 +223,6 @@ int msm_flash_led_release(struct msm_led_flash_ctrl_t *fctrl)
 		pr_err("%s:%d invalid led state\n", __func__, __LINE__);
 		return -EINVAL;
 	}
-        
-        flashdata = fctrl->flashdata;
-        power_info = &flashdata->power_info;
-        
 	gpio_set_value_cansleep(
 		power_info->gpio_conf->gpio_num_info->
 		gpio_num[SENSOR_GPIO_FL_EN],
@@ -259,7 +254,7 @@ int msm_flash_led_release(struct msm_led_flash_ctrl_t *fctrl)
 	}
 
         fctrl->led_state = MSM_CAMERA_LED_RELEASE;
-	
+	/* CCI deInit */
 	if (fctrl->flash_device_type == MSM_CAMERA_PLATFORM_DEVICE) {
 		rc = fctrl->flash_i2c_client->i2c_func_tbl->i2c_util(
 			fctrl->flash_i2c_client, MSM_CCI_RELEASE);
@@ -276,14 +271,13 @@ int msm_flash_led_off(struct msm_led_flash_ctrl_t *fctrl)
 	struct msm_camera_sensor_board_info *flashdata = NULL;
 	struct msm_camera_power_ctrl_t *power_info = NULL;
 
+	flashdata = fctrl->flashdata;
+	power_info = &flashdata->power_info;
 	CDBG("%s:%d called\n", __func__, __LINE__);
 	if (!fctrl) {
 		pr_err("%s:%d fctrl NULL\n", __func__, __LINE__);
 		return -EINVAL;
 	}
-	flashdata = fctrl->flashdata;
-	power_info = &flashdata->power_info;
-
 	if (fctrl->flash_i2c_client && fctrl->reg_setting) {
 		rc = fctrl->flash_i2c_client->i2c_func_tbl->i2c_write_table(
 			fctrl->flash_i2c_client,
@@ -413,7 +407,7 @@ static int32_t msm_led_get_dt_data(struct device_node *of_node,
 	CDBG("%s qcom,cci-master %d, rc %d\n", __func__, fctrl->cci_i2c_master,
 		rc);
 	if (rc < 0) {
-		
+		/* Set default master 0 */
 		fctrl->cci_i2c_master = MASTER_0;
 		rc = 0;
 	}
@@ -467,7 +461,7 @@ static int32_t msm_led_get_dt_data(struct device_node *of_node,
 				&fctrl->flash_trigger[i]);
 		}
 
-	} else { 
+	} else { /*Handle LED Flash Ctrl by GPIO*/
 		power_info->gpio_conf =
 			 kzalloc(sizeof(struct msm_camera_gpio_conf),
 				 GFP_KERNEL);
@@ -623,10 +617,10 @@ int msm_flash_i2c_probe(struct i2c_client *client,
 	fctrl = (struct msm_led_flash_ctrl_t *)(id->driver_data);
 	if (fctrl->flash_i2c_client)
 		fctrl->flash_i2c_client->client = client;
-	
+	/* Set device type as I2C */
 	fctrl->flash_device_type = MSM_CAMERA_I2C_DEVICE;
 
-	
+	/* Assign name for sub device */
 	snprintf(fctrl->msm_sd.sd.name, sizeof(fctrl->msm_sd.sd.name),
 		"%s", id->name);
 
@@ -691,10 +685,10 @@ int msm_flash_probe(struct platform_device *pdev,
 	}
 
         msm_flash_pinctrl_init(fctrl);
-	
+	/* Assign name for sub device */
 	snprintf(fctrl->msm_sd.sd.name, sizeof(fctrl->msm_sd.sd.name),
 			"%s", fctrl->flashdata->sensor_name);
-	
+	/* Set device type as Platform*/
 	fctrl->flash_device_type = MSM_CAMERA_PLATFORM_DEVICE;
 
 	if (NULL == fctrl->flash_i2c_client) {

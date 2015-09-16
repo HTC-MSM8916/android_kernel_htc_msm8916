@@ -46,10 +46,10 @@ static const struct afe_clk_cfg lpass_clk_cfg_default = {
 	0,
 };
 enum {
-	STATUS_PORT_STARTED, 
-	
+	STATUS_PORT_STARTED, /* track if AFE port has started */
+	/* track AFE Tx port status for bi-directional transfers */
 	STATUS_TX_PORT,
-	
+	/* track AFE Rx port status for bi-directional transfers */
 	STATUS_RX_PORT,
 	STATUS_MAX
 };
@@ -88,15 +88,21 @@ struct msm_dai_q6_mi2s_dai_data {
 };
 
 struct msm_dai_q6_auxpcm_dai_data {
-	
+	/* BITMAP to track Rx and Tx port usage count */
 	DECLARE_BITMAP(auxpcm_port_status, STATUS_MAX);
-	struct mutex rlock; 
-	u16 rx_pid; 
-	u16 tx_pid; 
-	struct afe_clk_cfg clk_cfg; 
-	struct msm_dai_q6_dai_data bdai_data; 
+	struct mutex rlock; /* auxpcm dev resource lock */
+	u16 rx_pid; /* AUXPCM RX AFE port ID */
+	u16 tx_pid; /* AUXPCM TX AFE port ID */
+	struct afe_clk_cfg clk_cfg; /* hold LPASS clock configuration */
+	struct msm_dai_q6_dai_data bdai_data; /* incoporate base DAI data */
 };
 
+/* MI2S format field for AFE_PORT_CMD_I2S_CONFIG command
+ *  0: linear PCM
+ *  1: non-linear PCM
+ *  2: PCM data in IEC 60968 container
+ *  3: compressed data in IEC 60958 container
+ */
 static const char *const mi2s_format[] = {
 	"LPCM",
 	"Compr",
@@ -163,7 +169,7 @@ static int msm_dai_q6_auxpcm_hw_params(
 
 	if (test_bit(STATUS_TX_PORT, aux_dai_data->auxpcm_port_status) ||
 	    test_bit(STATUS_RX_PORT, aux_dai_data->auxpcm_port_status)) {
-		
+		/* AUXPCM DAI in use */
 		if (dai_data->rate != params_rate(params)) {
 			dev_err(dai->dev, "%s: rate mismatch of running DAI\n",
 			__func__);
@@ -273,7 +279,7 @@ static void msm_dai_q6_auxpcm_shutdown(struct snd_pcm_substream *substream,
 
 	lpass_pcm_src_clk = (struct afe_clk_cfg *) &aux_dai_data->clk_cfg;
 
-	rc = afe_close(aux_dai_data->rx_pid); 
+	rc = afe_close(aux_dai_data->rx_pid); /* can block */
 	if (IS_ERR_VALUE(rc))
 		dev_err(dai->dev, "fail to close PCM_RX  AFE port\n");
 
@@ -411,7 +417,7 @@ static int msm_dai_q6_auxpcm_trigger(struct snd_pcm_substream *substream,
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-		
+		/* afe_open will be called from prepare */
 		return 0;
 
 	case SNDRV_PCM_TRIGGER_STOP:
@@ -440,7 +446,7 @@ static int msm_dai_q6_dai_auxpcm_remove(struct snd_soc_dai *dai)
 
 	if (test_bit(STATUS_TX_PORT, aux_dai_data->auxpcm_port_status) ||
 	    test_bit(STATUS_RX_PORT, aux_dai_data->auxpcm_port_status)) {
-		rc = afe_close(aux_dai_data->rx_pid); 
+		rc = afe_close(aux_dai_data->rx_pid); /* can block */
 		if (IS_ERR_VALUE(rc))
 			dev_err(dai->dev, "fail to close AUXPCM RX AFE port\n");
 		rc = afe_close(aux_dai_data->tx_pid);
@@ -760,9 +766,9 @@ static int msm_dai_q6_spdif_dai_remove(struct snd_soc_dai *dai)
 
 	dai_data = dev_get_drvdata(dai->dev);
 
-	
+	/* If AFE port is still up, close it */
 	if (test_bit(STATUS_PORT_STARTED, dai_data->status_mask)) {
-		rc = afe_close(dai->id); 
+		rc = afe_close(dai->id); /* can block */
 
 		if (IS_ERR_VALUE(rc))
 			dev_err(dai->dev, "fail to close AFE port\n");
@@ -902,7 +908,7 @@ static int msm_dai_q6_i2s_hw_params(struct snd_pcm_hw_params *params,
 	dai_data->port_config.i2s.i2s_cfg_minor_version =
 						AFE_API_VERSION_I2S_CONFIG;
 	dai_data->port_config.i2s.data_format =  AFE_LINEAR_PCM_DATA;
-	
+	/* Q6 only supports 16 as now */
 	dai_data->port_config.i2s.bit_width = 16;
 	dai_data->port_config.i2s.channel_mode = 1;
 
@@ -989,7 +995,7 @@ static int msm_dai_q6_afe_rtproxy_hw_params(struct snd_pcm_hw_params *params,
 
 	dai_data->port_config.rtproxy.rt_proxy_cfg_minor_version =
 				AFE_API_VERSION_RT_PROXY_CONFIG;
-	dai_data->port_config.rtproxy.bit_width = 16; 
+	dai_data->port_config.rtproxy.bit_width = 16; /* Q6 only supports 16 */
 	dai_data->port_config.rtproxy.interleaved = 1;
 	dai_data->port_config.rtproxy.frame_size = params_period_bytes(params);
 	dai_data->port_config.rtproxy.jitter_allowance =
@@ -1008,7 +1014,7 @@ static int msm_dai_q6_psuedo_port_hw_params(struct snd_pcm_hw_params *params,
 	dai_data->channels = params_channels(params);
 	dai_data->rate = params_rate(params);
 
-	
+	/* Q6 only supports 16 as now */
 	dai_data->port_config.pseudo_port.pseud_port_cfg_minor_version =
 				AFE_API_VERSION_PSEUDO_PORT_CONFIG;
 	dai_data->port_config.pseudo_port.num_channels =
@@ -1030,6 +1036,10 @@ static int msm_dai_q6_psuedo_port_hw_params(struct snd_pcm_hw_params *params,
 	return 0;
 }
 
+/* Current implementation assumes hw_param is called once
+ * This may not be the case but what to do when ADM and AFE
+ * port are already opened and parameter changes
+ */
 static int msm_dai_q6_hw_params(struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *params,
 				struct snd_soc_dai *dai)
@@ -1097,7 +1107,7 @@ static void msm_dai_q6_shutdown(struct snd_pcm_substream *substream,
 
 	if (test_bit(STATUS_PORT_STARTED, dai_data->status_mask)) {
 		pr_debug("%s, stop pseudo port:%d\n", __func__,  dai->id);
-		rc = afe_close(dai->id); 
+		rc = afe_close(dai->id); /* can block */
 
 		if (IS_ERR_VALUE(rc))
 			dev_err(dai->dev, "fail to close AFE port\n");
@@ -1113,10 +1123,10 @@ static int msm_dai_q6_cdc_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
 	case SND_SOC_DAIFMT_CBS_CFS:
-		dai_data->port_config.i2s.ws_src = 1; 
+		dai_data->port_config.i2s.ws_src = 1; /* CPU is master */
 		break;
 	case SND_SOC_DAIFMT_CBM_CFM:
-		dai_data->port_config.i2s.ws_src = 0; 
+		dai_data->port_config.i2s.ws_src = 0; /* CPU is slave */
 		break;
 	default:
 		return -EINVAL;
@@ -1164,6 +1174,12 @@ static int msm_dai_q6_set_channel_map(struct snd_soc_dai *dai,
 	case SLIMBUS_3_RX:
 	case SLIMBUS_4_RX:
 	case SLIMBUS_6_RX:
+		/*
+		 * channel number to be between 128 and 255.
+		 * For RX port use channel numbers
+		 * from 138 to 144 for pre-Taiko
+		 * from 144 to 159 for Taiko
+		 */
 		if (!rx_slot)
 			return -EINVAL;
 		for (i = 0; i < rx_num; i++) {
@@ -1186,6 +1202,12 @@ static int msm_dai_q6_set_channel_map(struct snd_soc_dai *dai,
 	case SLIMBUS_4_TX:
 	case SLIMBUS_5_TX:
 	case SLIMBUS_6_TX:
+		/*
+		 * channel number to be between 128 and 255.
+		 * For TX port use channel numbers
+		 * from 128 to 137 for pre-Taiko
+		 * from 128 to 143 for Taiko
+		 */
 		if (!tx_slot)
 			return -EINVAL;
 		for (i = 0; i < tx_num; i++) {
@@ -1246,10 +1268,10 @@ static int msm_dai_q6_dai_remove(struct snd_soc_dai *dai)
 
 	dai_data = dev_get_drvdata(dai->dev);
 
-	
+	/* If AFE port is still up, close it */
 	if (test_bit(STATUS_PORT_STARTED, dai_data->status_mask)) {
 		pr_debug("%s, stop pseudo port:%d\n", __func__,  dai->id);
-		rc = afe_close(dai->id); 
+		rc = afe_close(dai->id); /* can block */
 
 		if (IS_ERR_VALUE(rc))
 			dev_err(dai->dev, "fail to close AFE port\n");
@@ -1994,10 +2016,10 @@ static int msm_dai_q6_dai_mi2s_remove(struct snd_soc_dai *dai)
 		dev_get_drvdata(dai->dev);
 	int rc;
 
-	
+	/* If AFE port is still up, close it */
 	if (test_bit(STATUS_PORT_STARTED,
 		     mi2s_dai_data->rx_dai.mi2s_dai_data.status_mask)) {
-		rc = afe_close(MI2S_RX); 
+		rc = afe_close(MI2S_RX); /* can block */
 		if (IS_ERR_VALUE(rc))
 			dev_err(dai->dev, "fail to close MI2S_RX port\n");
 		clear_bit(STATUS_PORT_STARTED,
@@ -2005,7 +2027,7 @@ static int msm_dai_q6_dai_mi2s_remove(struct snd_soc_dai *dai)
 	}
 	if (test_bit(STATUS_PORT_STARTED,
 		     mi2s_dai_data->tx_dai.mi2s_dai_data.status_mask)) {
-		rc = afe_close(MI2S_TX); 
+		rc = afe_close(MI2S_TX); /* can block */
 		if (IS_ERR_VALUE(rc))
 			dev_err(dai->dev, "fail to close MI2S_TX port\n");
 		clear_bit(STATUS_PORT_STARTED,
@@ -2103,6 +2125,9 @@ static int msm_dai_q6_mi2s_prepare(struct snd_pcm_substream *substream,
 		dai->id, port_id, dai_data->channels, dai_data->rate);
 
 	if (!test_bit(STATUS_PORT_STARTED, dai_data->status_mask)) {
+		/* PORT START should be set if prepare called
+		 * in active state.
+		 */
 		rc = afe_port_start(port_id, &dai_data->port_config,
 				    dai_data->rate);
 
@@ -2337,6 +2362,7 @@ static struct snd_soc_dai_ops msm_dai_q6_mi2s_ops = {
 	.shutdown	= msm_dai_q6_mi2s_shutdown,
 };
 
+/* Channel min and max are initialized base on platform data */
 static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai[] = {
 	{
 		.playback = {
@@ -3110,5 +3136,6 @@ static void __exit msm_dai_q6_exit(void)
 }
 module_exit(msm_dai_q6_exit);
 
+/* Module information */
 MODULE_DESCRIPTION("MSM DSP DAI driver");
 MODULE_LICENSE("GPL v2");

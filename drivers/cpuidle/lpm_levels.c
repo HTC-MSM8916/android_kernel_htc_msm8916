@@ -134,6 +134,7 @@ static struct attribute_group lpm_levels_attr_grp = {
 	.attrs = lpm_levels_attr,
 };
 
+/* SYSFS */
 static ssize_t lpm_levels_attr_show(
 	struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
@@ -273,6 +274,11 @@ static int lpm_system_mode_select(struct lpm_system_state *system_state,
 		if (!system_level->available)
 			continue;
 
+		/* The following check is to support legacy behavior where
+		 * only the last online core enters a system low power mode.
+		 * This should eventually be removed once all targets support
+		 * system low power modes with multiple cores online.
+		 */
 		if (system_level->sync_level
 				&& (num_online_cpus() > 1)
 				&& !sys_state.allow_synched_levels)
@@ -672,6 +678,11 @@ static inline void lpm_cpu_prepare(struct lpm_system_state *system_state,
 	struct lpm_cpu_level *cpu_level = &system_state->cpu_level[cpu_index];
 	unsigned int cpu = smp_processor_id();
 
+	/* Use broadcast timer for aggregating sleep mode within a cluster.
+	 * A broadcast timer could be used because of harware restriction or
+	 * to ensure that we BC timer is used incase a cpu mode could trigger
+	 * a cluster level sleep
+	 */
 	if (from_idle && (cpu_level->use_bc_timer ||
 			(cpu_level->mode >= system_state->sync_cpu_mode)))
 		clockevents_notify(CLOCK_EVT_NOTIFY_BROADCAST_ENTER, &cpu);
@@ -766,6 +777,13 @@ static int lpm_cpuidle_enter(struct cpuidle_device *dev,
 	return idx;
 }
 
+/**
+ * lpm_cpu_hotplug_enter(): Called by dying CPU to terminate in low power mode
+ *
+ * @cpu: cpuid of the dying CPU
+ *
+ * Called from platform_cpu_kill() to terminate hotplug in a low power mode
+ */
 
 void lpm_cpu_hotplug_enter(unsigned int cpu)
 {

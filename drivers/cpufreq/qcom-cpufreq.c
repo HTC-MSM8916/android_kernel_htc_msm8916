@@ -134,6 +134,10 @@ static int set_cpu_freq(struct cpufreq_policy *policy, unsigned int new_freq,
 	freqs.new = new_freq;
 	freqs.cpu = policy->cpu;
 
+	/*
+	 * Put the caller into SCHED_FIFO priority to avoid cpu starvation
+	 * while increasing frequencies
+	 */
 
 	if (freqs.new > freqs.old && current->policy != SCHED_FIFO) {
 		saved_sched_policy = current->policy;
@@ -166,7 +170,7 @@ static int set_cpu_freq(struct cpufreq_policy *policy, unsigned int new_freq,
 		cpufreq_notify_transition(policy, &freqs, CPUFREQ_POSTCHANGE);
 	}
 
-	
+	/* Restore priority after clock ramp-up */
 	if (freqs.new > freqs.old && saved_sched_policy >= 0) {
 		param.sched_priority = saved_sched_rt_prio;
 		sched_setscheduler_nocheck(current, saved_sched_policy, &param);
@@ -257,6 +261,12 @@ static int msm_cpufreq_init(struct cpufreq_policy *policy)
 	table = cpufreq_frequency_get_table(policy->cpu);
 	if (table == NULL)
 		return -ENODEV;
+	/*
+	 * In some SoC, some cores are clocked by same source, and their
+	 * frequencies can not be changed independently. Find all other
+	 * CPUs that share same clock, and mark them as controlled by
+	 * same policy.
+	 */
 	for_each_possible_cpu(cpu)
 		if (cpu_clk[cpu] == cpu_clk[policy->cpu])
 			cpumask_set_cpu(cpu, policy->cpus);
@@ -286,6 +296,10 @@ static int msm_cpufreq_init(struct cpufreq_policy *policy)
 				policy->cpu, cur_freq);
 		return -EINVAL;
 	}
+	/*
+	 * Call set_cpu_freq unconditionally so that when cpu is set to
+	 * online, frequency limit will always be updated.
+	 */
 	ret = set_cpu_freq(policy, table[index].frequency,
 			   table[index].driver_data);
 	if (ret)
@@ -303,11 +317,15 @@ static int msm_cpufreq_cpu_callback(struct notifier_block *nfb,
 	unsigned int cpu = (unsigned long)hcpu;
 	int rc;
 
-	
+	/* Fail hotplug until this driver can get CPU clocks */
 	if (!hotplug_ready)
 		return NOTIFY_BAD;
 
 	switch (action & ~CPU_TASKS_FROZEN) {
+	/*
+	 * Scale down clock/power of CPU that is dead and scale it back up
+	 * before the CPU is brought up.
+	 */
 	case CPU_DEAD:
 		clk_disable_unprepare(cpu_clk[cpu]);
 		clk_disable_unprepare(l2_clk);
@@ -410,7 +428,7 @@ static struct freq_attr *msm_freq_attr[] = {
 };
 
 static struct cpufreq_driver msm_cpufreq_driver = {
-	
+	/* lps calculations are handled here. */
 	.flags		= CPUFREQ_STICKY | CPUFREQ_CONST_LOOPS,
 	.init		= msm_cpufreq_init,
 	.verify		= msm_cpufreq_verify,
@@ -429,7 +447,7 @@ static int cpufreq_parse_dt(struct device *dev)
 	if (l2_clk)
 		num_cols++;
 
-	
+	/* Parse CPU freq -> L2/Mem BW map table. */
 	if (!of_find_property(dev->of_node, PROP_TBL, &len))
 		return -EINVAL;
 	len /= sizeof(*data);
@@ -446,7 +464,7 @@ static int cpufreq_parse_dt(struct device *dev)
 	if (ret)
 		return ret;
 
-	
+	/* Allocate all data structures. */
 	freq_table = devm_kzalloc(dev, (nf + 1) * sizeof(*freq_table),
 				  GFP_KERNEL);
 	mem_bw = devm_kzalloc(dev, nf * sizeof(*mem_bw), GFP_KERNEL);
@@ -469,6 +487,21 @@ static int cpufreq_parse_dt(struct device *dev)
 			break;
 		f /= 1000;
 
+		/*
+		 * Check if this is the last feasible frequency in the table.
+		 *
+		 * The table listing frequencies higher than what the HW can
+		 * support is not an error since the table might be shared
+		 * across CPUs in different speed bins. It's also not
+		 * sufficient to check if the rounded rate is lower than the
+		 * requested rate as it doesn't cover the following example:
+		 *
+		 * Table lists: 2.2 GHz and 2.5 GHz.
+		 * Rounded rate returns: 2.2 GHz and 2.3 GHz.
+		 *
+		 * In this case, we can CPUfreq to use 2.2 GHz and 2.3 GHz
+		 * instead of rejecting the 2.5 GHz table entry.
+		 */
 		if (i > 0 && f <= freq_table[i-1].frequency)
 			break;
 
@@ -635,7 +668,7 @@ static int __init msm_cpufreq_register(void)
 	rc = platform_driver_probe(&msm_cpufreq_plat_driver,
 				   msm_cpufreq_probe);
 	if (rc < 0) {
-		
+		/* Unblock hotplug if msm-cpufreq probe fails */
 		unregister_hotcpu_notifier(&msm_cpufreq_cpu_notifier);
 		for_each_possible_cpu(cpu)
 			mutex_destroy(&(per_cpu(cpufreq_suspend, cpu).

@@ -216,6 +216,7 @@ enum mdss_mdp_sspp_chroma_samp_type {
 #define MDSS_MDP_REG_VIG_MEM_COL_BASE			0x288
 #define MDSS_MDP_REG_VIG_PA_BASE			0x310
 
+/* in mpq product */
 #define MDSS_MDP_REG_VIG_FLUSH_SEL			0x204
 
 #define MDSS_MDP_VIG_OP_PA_SAT_ZERO_EXP_EN		BIT(2)
@@ -581,6 +582,7 @@ enum mdss_mdp_pingpong_index {
 #define MDSS_MDP_INTF_MISR_CTRL		0x180
 #define MDSS_MDP_INTF_MISR_SIGNATURE		(MDSS_MDP_INTF_MISR_CTRL + 0x4)
 
+/* following offsets are with respect to MDP VBIF base */
 #define MMSS_VBIF_XIN_HALT_CTRL0	0x200
 #define MMSS_VBIF_XIN_HALT_CTRL1	0x204
 #define MMSS_VBIF_AXI_HALT_CTRL0	0x208
@@ -589,9 +591,9 @@ enum mdss_mdp_pingpong_index {
 #define MDSS_VBIF_QOS_REMAP_BASE	0x020
 #define MDSS_VBIF_QOS_REMAP_ENTRIES	0x4
 
-#define MDSS_MDP_REG_TRAFFIC_SHAPER_EN                 BIT(31)
-#define MDSS_MDP_REG_TRAFFIC_SHAPER_RD_CLIENT(num)     (0x030 + (num * 4))
-#define MDSS_MDP_REG_TRAFFIC_SHAPER_WR_CLIENT(num)     (0x060 + (num * 4))
-#define MDSS_MDP_REG_TRAFFIC_SHAPER_FIXPOINT_FACTOR    4
+#define MDSS_MDP_REG_TRAFFIC_SHAPER_EN			BIT(31)
+#define MDSS_MDP_REG_TRAFFIC_SHAPER_RD_CLIENT(num)	(0x030 + (num * 4))
+#define MDSS_MDP_REG_TRAFFIC_SHAPER_WR_CLIENT(num)	(0x060 + (num * 4))
+#define MDSS_MDP_REG_TRAFFIC_SHAPER_FIXPOINT_FACTOR	4
 
 #endif

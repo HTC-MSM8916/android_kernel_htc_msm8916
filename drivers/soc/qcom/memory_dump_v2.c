@@ -89,6 +89,7 @@ static struct msm_dump_table *msm_dump_get_table(enum msm_dump_table_ids id)
 	else
 		table = phys_to_virt(table->entries[i].addr);
 #else
+	/* Get the apps table pointer */
 	table = phys_to_virt(table->entries[i].addr);
 #endif
 
@@ -171,7 +172,7 @@ static int __init init_memory_dump(void)
 	memdump.table_phys = virt_to_phys(memdump.table);
 #endif
 	writel_relaxed(memdump.table_phys, imem_base);
-	
+	/* Ensure write to imem_base is complete before unmapping */
 	mb();
 	pr_info("MSM Memory Dump base table set up\n");
 

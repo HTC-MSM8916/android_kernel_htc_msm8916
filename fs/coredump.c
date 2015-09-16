@@ -54,6 +54,7 @@ struct core_name {
 };
 static atomic_t call_count = ATOMIC_INIT(1);
 
+/* The maximal length of core_pattern is also specified in sysctl.c */
 
 static int expand_corename(struct core_name *cn)
 {
@@ -144,6 +145,10 @@ put_exe_file:
 	return ret;
 }
 
+/* format_corename will inspect the pattern parameter, and output a
+ * name into corename, which must have space for at least
+ * CORENAME_MAX_SIZE bytes plus one byte for the zero terminator.
+ */
 static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 {
 	const struct cred *cred = current_cred();
@@ -167,6 +172,8 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 	if (!cn->corename)
 		return -ENOMEM;
 
+	/* Repeat as long as we have more pattern to process and more output
+	   space */
 	while (*pat_ptr) {
 		if (*pat_ptr != '%') {
 			if (*pat_ptr == 0)
@@ -174,24 +181,24 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 			err = cn_printf(cn, "%c", *pat_ptr++);
 		} else {
 			switch (*++pat_ptr) {
-			
+			/* single % at the end, drop that */
 			case 0:
 				goto out;
-			
+			/* Double percent, output one percent */
 			case '%':
 				err = cn_printf(cn, "%c", '%');
 				break;
-			
+			/* pid */
 			case 'p':
 				pid_in_pattern = 1;
 				err = cn_printf(cn, "%d",
 					      task_tgid_vnr(current));
 				break;
-			
+			/* uid */
 			case 'u':
 				err = cn_printf(cn, "%d", cred->uid);
 				break;
-			
+			/* gid */
 			case 'g':
 				err = cn_printf(cn, "%d", cred->gid);
 				break;
@@ -199,18 +206,18 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 				err = cn_printf(cn, "%d",
 					__get_dumpable(cprm->mm_flags));
 				break;
-			
+			/* signal that caused the coredump */
 			case 's':
 				err = cn_printf(cn, "%ld", cprm->siginfo->si_signo);
 				break;
-			
+			/* UNIX time of coredump */
 			case 't': {
 				struct timeval tv;
 				do_gettimeofday(&tv);
 				err = cn_printf(cn, "%lu", tv.tv_sec);
 				break;
 			}
-			
+			/* hostname */
 			case 'h': {
 				char *namestart = cn->corename + cn->used;
 				down_read(&uts_sem);
@@ -220,7 +227,7 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 				cn_escape(namestart);
 				break;
 			}
-			
+			/* executable */
 			case 'e': {
 				char *commstart = cn->corename + cn->used;
 				err = cn_printf(cn, "%s", current->comm);
@@ -230,7 +237,7 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 			case 'E':
 				err = cn_print_exe_file(cn);
 				break;
-			
+			/* core limit size */
 			case 'c':
 				err = cn_printf(cn, "%lu",
 					      rlimit(RLIMIT_CORE));
@@ -245,6 +252,11 @@ static int format_corename(struct core_name *cn, struct coredump_params *cprm)
 			return err;
 	}
 
+	/* Backward compatibility with core_uses_pid:
+	 *
+	 * If core_pattern does not include a %p (as is the default)
+	 * and core_uses_pid is set, then .%pid will be appended to
+	 * the filename. Do not do this for piped commands. */
 	if (!ispipe && !pid_in_pattern && core_uses_pid) {
 		err = cn_printf(cn, ".%d", task_tgid_vnr(current));
 		if (err)
@@ -287,7 +299,7 @@ static int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 		mm->core_state = core_state;
 		nr = zap_process(tsk, exit_code);
 		tsk->signal->group_exit_task = tsk;
-		
+		/* ignore all signals except SIGKILL, see prepare_signal() */
 		tsk->signal->flags = SIGNAL_GROUP_COREDUMP;
 		clear_tsk_thread_flag(tsk, TIF_SIGPENDING);
 	}
@@ -298,6 +310,36 @@ static int zap_threads(struct task_struct *tsk, struct mm_struct *mm,
 	tsk->flags = PF_DUMPCORE;
 	if (atomic_read(&mm->mm_users) == nr + 1)
 		goto done;
+	/*
+	 * We should find and kill all tasks which use this mm, and we should
+	 * count them correctly into ->nr_threads. We don't take tasklist
+	 * lock, but this is safe wrt:
+	 *
+	 * fork:
+	 *	None of sub-threads can fork after zap_process(leader). All
+	 *	processes which were created before this point should be
+	 *	visible to zap_threads() because copy_process() adds the new
+	 *	process to the tail of init_task.tasks list, and lock/unlock
+	 *	of ->siglock provides a memory barrier.
+	 *
+	 * do_exit:
+	 *	The caller holds mm->mmap_sem. This means that the task which
+	 *	uses this mm can't pass exit_mm(), so it can't exit or clear
+	 *	its ->mm.
+	 *
+	 * de_thread:
+	 *	It does list_replace_rcu(&leader->tasks, &current->tasks),
+	 *	we must see either old or new leader, this does not matter.
+	 *	However, it can change p->sighand, so lock_task_sighand(p)
+	 *	must be used. Since p->mm != NULL and we hold ->mmap_sem
+	 *	it can't fail.
+	 *
+	 *	Note also that "g" can be the old leader with ->mm == NULL
+	 *	and already unhashed and thus removed from ->thread_group.
+	 *	This is OK, __unhash_process()->list_del_rcu() does not
+	 *	clear the ->next pointer, we will find the new leader via
+	 *	next_thread().
+	 */
 	rcu_read_lock();
 	for_each_process(g) {
 		if (g == tsk->group_leader)
@@ -342,6 +384,11 @@ static int coredump_wait(int exit_code, struct core_state *core_state)
 		struct core_thread *ptr;
 
 		wait_for_completion(&core_state->startup);
+		/*
+		 * Wait for all the threads to become inactive, so that
+		 * all the thread context (extended register state, like
+		 * fpu etc) gets copied to the memory.
+		 */
 		ptr = core_state->dumper.next;
 		while (ptr != NULL) {
 			wait_task_inactive(ptr->task, 0);
@@ -368,6 +415,10 @@ static void coredump_finish(struct mm_struct *mm, bool core_dumped)
 	while ((curr = next) != NULL) {
 		next = curr->next;
 		task = curr->task;
+		/*
+		 * see exit_mm(), curr->task must not see
+		 * ->task == NULL before we read ->next.
+		 */
 		smp_mb();
 		curr->task = NULL;
 		wake_up_process(task);
@@ -378,6 +429,12 @@ static void coredump_finish(struct mm_struct *mm, bool core_dumped)
 
 static bool dump_interrupted(void)
 {
+	/*
+	 * SIGKILL or freezing() interrupt the coredumping. Perhaps we
+	 * can do try_to_freeze() and check __fatal_signal_pending(),
+	 * but then we need to teach dump_write() to restart and clear
+	 * TIF_SIGPENDING.
+	 */
 	return signal_pending(current);
 }
 
@@ -392,6 +449,10 @@ static void wait_for_dump_helpers(struct file *file)
 	kill_fasync(&pipe->fasync_readers, SIGIO, POLL_IN);
 	pipe_unlock(pipe);
 
+	/*
+	 * We actually want wait_event_freezable() but then we need
+	 * to clear TIF_SIGPENDING and improve dump_interrupted().
+	 */
 	wait_event_interruptible(pipe->wait, pipe->readers == 1);
 
 	pipe_lock(pipe);
@@ -400,6 +461,17 @@ static void wait_for_dump_helpers(struct file *file)
 	pipe_unlock(pipe);
 }
 
+/*
+ * umh_pipe_setup
+ * helper function to customize the process used
+ * to collect the core in userspace.  Specifically
+ * it sets up a pipe and installs it as fd 0 (stdin)
+ * for the process.  Returns 0 on success, or
+ * PTR_ERR on failure.
+ * Note that it also sets the core limit to 1.  This
+ * is a special value that we use to trap recursive
+ * core dumps
+ */
 static int umh_pipe_setup(struct subprocess_info *info, struct cred *new)
 {
 	struct file *files[2];
@@ -412,7 +484,7 @@ static int umh_pipe_setup(struct subprocess_info *info, struct cred *new)
 
 	err = replace_fd(0, files[0], 0);
 	fput(files[0]);
-	
+	/* and disallow core files too */
 	current->signal->rlim[RLIMIT_CORE] = (struct rlimit){1, 1};
 
 	return err;
@@ -437,6 +509,11 @@ void do_coredump(siginfo_t *siginfo)
 		.siginfo = siginfo,
 		.regs = signal_pt_regs(),
 		.limit = rlimit(RLIMIT_CORE),
+		/*
+		 * We must use the same mm->flags while dumping core to avoid
+		 * inconsistency of bit flags, since this flag is not protected
+		 * by any locks.
+		 */
 		.mm_flags = mm->flags,
 	};
 
@@ -451,10 +528,16 @@ void do_coredump(siginfo_t *siginfo)
 	cred = prepare_creds();
 	if (!cred)
 		goto fail;
+	/*
+	 * We cannot trust fsuid as being the "true" uid of the process
+	 * nor do we know its entire history. We only know it was tainted
+	 * so we dump it as root in mode 2, and only into a controlled
+	 * environment (pipe handler or fully qualified path).
+	 */
 	if (__get_dumpable(cprm.mm_flags) == SUID_DUMP_ROOT) {
-		
-		flag = O_EXCL;		
-		cred->fsuid = GLOBAL_ROOT_UID;	
+		/* Setuid core dump mode */
+		flag = O_EXCL;		/* Stop rewrite attacks */
+		cred->fsuid = GLOBAL_ROOT_UID;	/* Dump root private */
 		need_nonrelative = true;
 	}
 
@@ -478,6 +561,21 @@ void do_coredump(siginfo_t *siginfo)
 		}
 
 		if (cprm.limit == 1) {
+			/* See umh_pipe_setup() which sets RLIMIT_CORE = 1.
+			 *
+			 * Normally core limits are irrelevant to pipes, since
+			 * we're not writing to the file system, but we use
+			 * cprm.limit of 1 here as a speacial value, this is a
+			 * consistent way to catch recursive crashes.
+			 * We can still crash if the core_pattern binary sets
+			 * RLIM_CORE = !1, but it runs as root, and can do
+			 * lots of stupid things.
+			 *
+			 * Note that we use task_tgid_vnr here to grab the pid
+			 * of the process group leader.  That way we get the
+			 * right pid if a thread in a multi-threaded
+			 * core_pattern process dies.
+			 */
 			printk(KERN_WARNING
 				"Process %d(%s) has RLIMIT_CORE set to 1\n",
 				task_tgid_vnr(current), current->comm);
@@ -540,8 +638,16 @@ void do_coredump(siginfo_t *siginfo)
 			goto close_fail;
 		if (d_unhashed(cprm.file->f_path.dentry))
 			goto close_fail;
+		/*
+		 * AK: actually i see no reason to not allow this for named
+		 * pipes etc, but keep the previous behaviour for now.
+		 */
 		if (!S_ISREG(inode->i_mode))
 			goto close_fail;
+		/*
+		 * Dont allow local users get cute and trick others to coredump
+		 * into their pre-created files.
+		 */
 		if (!uid_eq(inode->i_uid, current_fsuid()))
 			goto close_fail;
 		if (!cprm.file->f_op || !cprm.file->f_op->write)
@@ -550,7 +656,7 @@ void do_coredump(siginfo_t *siginfo)
 			goto close_fail;
 	}
 
-	
+	/* get us an unshared descriptor table; almost always a no-op */
 	retval = unshare_files(&displaced);
 	if (retval)
 		goto close_fail;
@@ -585,6 +691,11 @@ fail:
 	return;
 }
 
+/*
+ * Core dumping helper functions.  These are the only things you should
+ * do on a core-file: use only these functions to write out all the
+ * necessary info.
+ */
 int dump_write(struct file *file, const void *addr, int nr)
 {
 	return !dump_interrupted() &&

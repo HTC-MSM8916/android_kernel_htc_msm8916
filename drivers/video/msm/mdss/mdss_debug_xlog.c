@@ -40,7 +40,7 @@ struct mdss_dbg_xlog {
 
 static int mdss_xlog_dump_open(struct inode *inode, struct file *file)
 {
-	
+	/* non-seekable */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 	file->private_data = inode->i_private;
 	return 0;

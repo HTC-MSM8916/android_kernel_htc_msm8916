@@ -406,6 +406,7 @@ static struct platform_driver gpio_event_driver = {
 	},
 	.id_table = gpio_event_id,
 };
+
 module_platform_driver(gpio_event_driver);
 
 MODULE_DESCRIPTION("GPIO Event Driver");

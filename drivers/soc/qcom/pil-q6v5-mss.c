@@ -117,7 +117,7 @@ static irqreturn_t modem_err_fatal_intr_handler(int irq, void *dev_id)
 {
 	struct modem_data *drv = subsys_to_drv(dev_id);
 
-	
+	/* Ignore if we're the one that set the force stop GPIO */
 	if (drv->crash_shutdown)
 		return IRQ_HANDLED;
 
@@ -191,6 +191,11 @@ static int modem_powerup(const struct subsys_desc *subsys)
 
 	if (subsys->is_not_loadable)
 		return 0;
+	/*
+	 * At this time, the modem is shutdown. Therefore this function cannot
+	 * run concurrently with the watchdog bite error handler, making it safe
+	 * to unset the flag below.
+	 */
 	INIT_COMPLETION(drv->stop_ack);
 	drv->ignore_errors = false;
 	return pil_boot(&drv->q6->desc);

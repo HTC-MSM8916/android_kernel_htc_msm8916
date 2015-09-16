@@ -63,8 +63,31 @@ struct msm_pm_sleep_status_data {
 
 int msm_pm_mode_sysfs_add(const char *);
 
+/**
+ * msm_pm_sleep_mode_allow() - API to determine if sleep mode is allowed.
+ * @cpu:	CPU on which to check for the sleep mode.
+ * @mode:	Sleep Mode to check for.
+ * @idle:	Idle or Suspend Sleep Mode.
+ *
+ * Helper function to determine if a Idle or Suspend
+ * Sleep mode is allowed for a specific CPU.
+ *
+ * Return: 1 for allowed; 0 if not allowed.
+ */
 int msm_pm_sleep_mode_allow(unsigned int, unsigned int, bool);
 
+/**
+ * msm_pm_sleep_mode_supported() - API to determine if sleep mode is
+ * supported.
+ * @cpu:	CPU on which to check for the sleep mode.
+ * @mode:	Sleep Mode to check for.
+ * @idle:	Idle or Suspend Sleep Mode.
+ *
+ * Helper function to determine if a Idle or Suspend
+ * Sleep mode is allowed and enabled for a specific CPU.
+ *
+ * Return: 1 for supported; 0 if not supported.
+ */
 int msm_pm_sleep_mode_supported(unsigned int, unsigned int, bool);
 
 struct msm_pm_cpr_ops {
@@ -135,4 +158,4 @@ int print_gpio_buffer(struct seq_file *m);
 int free_gpio_buffer(void);
 #endif
 
-#endif  
+#endif  /* __ARCH_ARM_MACH_MSM_PM_H */

@@ -156,17 +156,17 @@ static int msm_lsm_ioctl_shared(struct snd_pcm_substream *substream,
 		if (!confidence_level) {
 			pr_err("%s: Failed to allocate memory for confidence\n"
 			       "levels num of level from user = %d\n",
-				__func__, num_levels);
-			rc = -ENOMEM;
-			goto fail;
+			       __func__, num_levels);
+				rc = -ENOMEM;
+				goto fail;
 		}
 		prtd->lsm_client->confidence_levels = confidence_level;
 		if (copy_from_user(prtd->lsm_client->confidence_levels,
 				   snd_model_v2.confidence_level,
 				snd_model_v2.num_confidence_levels) && !rc) {
-			pr_err("%s: copy from user failed\n"
-				"confidence level %d\n",
-				__func__, snd_model_v2.num_confidence_levels);
+				pr_err("%s: copy from user failed\n"
+				       "confidece level %d\n", __func__,
+				       snd_model_v2.num_confidence_levels);
 			rc = -EFAULT;
 			goto fail;
 		}
@@ -240,7 +240,7 @@ fail:
 			 __func__, rc, xchg);
 		if (!rc && !xchg) {
 			pr_debug("%s: New event available %ld\n", __func__,
-				prtd->event_avail);
+				 prtd->event_avail);
 			spin_lock_irqsave(&prtd->event_lock, flags);
 			if (prtd->event_status)
 				size = sizeof(*(prtd->event_status)) +
@@ -402,7 +402,7 @@ static int msm_lsm_ioctl(struct snd_pcm_substream *substream,
 			err = msm_lsm_ioctl_shared(substream, cmd, user);
 		}
 		if (user) {
-			
+			/* Update size with actual payload size */
 			size = sizeof(*user) + user->payload_size;
 			if (!err && !access_ok(VERIFY_WRITE, arg, size)) {
 				pr_err("%s: write verify failed size %d\n",

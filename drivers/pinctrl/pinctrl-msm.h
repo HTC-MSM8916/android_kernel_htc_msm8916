@@ -20,6 +20,13 @@
 #include <linux/pinctrl/machine.h>
 #include <linux/platform_device.h>
 
+/**
+ * struct msm_pin_group: group of pins having the same pinmux function.
+ * @name: name of the pin group.
+ * @pins: the pins included in this group.
+ * @num_pins: number of pins included in this group.
+ * @func: the function number to be programmed when selected.
+ */
 struct msm_pin_grps {
 	const char *name;
 	unsigned int *pins;
@@ -27,12 +34,35 @@ struct msm_pin_grps {
 	u32 func;
 };
 
+/**
+ * struct msm_pmx_funcs: represent a pin function.
+ * @name: name of the pin function.
+ * @gps: one or more names of pin groups that provide this function.
+ * @num_grps: number of groups included in @groups.
+ */
 struct msm_pmx_funcs {
 	const char *name;
 	const char **gps;
 	unsigned num_grps;
 };
 
+/**
+ * struct msm_tlmm_irq_chip: represents interrupt controller descriptor
+ * @irq: irq number for tlmm summary interrupt.
+ * @chip_base: base register for TLMM.
+ * @num_irqs: number of pins that can be used as irq lines.
+ * @apps_id: id assigned to the apps processor.
+ * @enabled_irqs: bitmask of pins enabled as interrupts.
+ * @wake_irqs: bitmask of pins enabled as wake up interrupts.
+ * @irq_lock: protect against concurrent access.
+ * @domain: irq domain of given interrupt controller
+ * @irq_chip: irq chip operations.
+ * @irq_chip_extn: extension of irq chip operations.
+ * @dev: TLMM device.
+ * @device_node: device tree node of interrupt controller.
+ * @pinfo: pintype information.
+ * @handler: irq handler for given pintype interrupt controller
+ */
 struct msm_tlmm_irq_chip {
 	int irq;
 	void *__iomem chip_base;
@@ -52,6 +82,25 @@ struct msm_tlmm_irq_chip {
 	irqreturn_t (*handler)(int irq, struct msm_tlmm_irq_chip *ic);
 };
 
+/**
+ * struct msm_pintype_info: represent a pin type supported by the TLMM.
+ * @prg_cfg: helper to program a given config for a pintype.
+ * @prg_func: helper to program a given func for a pintype.
+ * @pack_cfg: helper to pack a parsed config as per a pintype.
+ * @set_reg_base: helper to set the register base address for a pintype.
+ * @init_irq: helper to initialize any irq functionality.
+ * @reg_data: register base for a pintype.
+ * @prop_name: DT property name for a pintype.
+ * @name: name of pintype.
+ * @num_pins: number of pins of given pintype.
+ * @pin_start: starting pin number for the given pintype within pinctroller.
+ * @pin_end: ending pin number for the given pintype within pinctroller.
+ * @gc: gpio chip implementation for pin type.
+ * @irq_chip: interrupt controller support for given pintype.
+ * @supports_gpio: pintype supports gpio function.
+ * @grange: pins that map to gpios.
+ * @node: device node for the pintype.
+ */
 struct msm_pintype_info {
 	int (*prg_cfg)(uint pin_no, unsigned long *config, void *reg_data,
 								bool rw);
@@ -73,16 +122,34 @@ struct msm_pintype_info {
 	struct device_node *node;
 };
 
+/**
+ * struct msm_tlmm_pintype: represents all the TLMM pintypes for a given TLMM
+ * version.
+ * @num_entries: number of pintypes.
+ * @pintype_info: descriptor for the pintypes. One for each present.
+ */
 struct msm_tlmm_pintype {
 	const uint num_entries;
 	struct msm_pintype_info *pintype_info;
 };
 
+/**
+ * struct msm_pindesc: descriptor for all pins maintained by pinctrl driver
+ * @pin_info: pintype for a given pin.
+ * @name: name of the pin.
+ */
 struct msm_pindesc {
 	struct msm_pintype_info *pin_info;
 	char name[20];
 };
 
+/**
+ * struct msm_tlmm_desc: descriptor for the TLMM hardware block
+ * @base: base address of tlmm desc.
+ * @irq: summary irq number for tlmm block. Must be > 0 if present.
+ * @num_pintypes: Number of pintypes on the tlmm block for a given SOC.
+ * @pintypes: pintypes supported on a given TLMM block for a given SOC.
+ */
 struct msm_tlmm_desc {
 	void __iomem *base;
 	int irq;
@@ -90,6 +157,7 @@ struct msm_tlmm_desc {
 	struct msm_pintype_info *pintypes;
 };
 
+/* Common probe for all TLMM */
 int msm_pinctrl_probe(struct platform_device *pdev,
 					struct msm_tlmm_desc *tlmm_info);
 #ifdef CONFIG_USE_PINCTRL_IRQ

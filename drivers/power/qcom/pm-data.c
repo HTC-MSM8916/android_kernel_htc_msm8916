@@ -18,12 +18,14 @@
 	(container_of(attr, struct msm_pm_kobj_attribute, ka)->cpu)
 
 struct msm_pm_platform_data {
-	u8 idle_supported;   
-	u8 suspend_supported; 
-	u8 suspend_enabled;  
-	u8 idle_enabled;     
-	u32 latency;         
-	u32 residency;       
+	u8 idle_supported;   /* Allow device to enter mode during idle */
+	u8 suspend_supported; /* Allow device to enter mode during suspend */
+	u8 suspend_enabled;  /* enabled for suspend */
+	u8 idle_enabled;     /* enabled for idle low power */
+	u32 latency;         /* interrupt latency in microseconds when entering
+				and exiting the low power mode */
+	u32 residency;       /* time threshold in microseconds beyond which
+				staying in the low power mode saves power */
 };
 
 static struct msm_pm_platform_data msm_pm_sleep_modes[] = {
@@ -206,6 +208,9 @@ static char *msm_pm_sleep_mode_labels[MSM_PM_SLEEP_MODE_NR] = {
 		"standalone_power_collapse",
 };
 
+/*
+ * Write out the attribute.
+ */
 static ssize_t msm_pm_mode_attr_show(
 	struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {

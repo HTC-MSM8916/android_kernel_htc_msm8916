@@ -47,11 +47,19 @@ static struct diag_hsic_bridge_map hsic_map[MAX_HSIC_CH] = {
 	{ 3, HSIC_DCI_TYPE, HSIC_DCI_CH_2, DIAG_DCI_BRIDGE_IDX_2 }
 };
 
+/*
+ * This array is the inverse of hsic_map indexed by the Bridge index
+ * for HSIC data channels
+ */
 int hsic_data_bridge_map[MAX_HSIC_DATA_CH] = {
 	DIAG_DATA_BRIDGE_IDX,
 	DIAG_DATA_BRIDGE_IDX_2
 };
 
+/*
+ * This array is the inverse of hsic_map indexed by the Bridge index
+ * for HSIC DCI channels
+ */
 int hsic_dci_bridge_map[MAX_HSIC_DCI_CH] = {
 	DIAG_DCI_BRIDGE_IDX,
 	DIAG_DCI_BRIDGE_IDX_2
@@ -73,6 +81,10 @@ static void diag_read_hsic_work_fn(struct work_struct *work)
 		return;
 	}
 
+	/*
+	 * Determine the current number of available buffers for writing after
+	 * reading from the HSIC has completed.
+	 */
 	if (driver->logging_mode == MEMORY_DEVICE_MODE)
 		write_ptrs_available = diag_hsic[index].poolsize_hsic_write -
 					diag_hsic[index].
@@ -81,18 +93,35 @@ static void diag_read_hsic_work_fn(struct work_struct *work)
 		write_ptrs_available = diag_hsic[index].poolsize_hsic_write -
 					diag_hsic[index].count_hsic_write_pool;
 
+	/*
+	 * Queue up a read on the HSIC for all available buffers in the
+	 * pool, exhausting the pool.
+	 */
 	do {
+		/*
+		 * If no more write buffers are available,
+		 * stop queuing reads
+		 */
 		if (write_ptrs_available <= 0)
 			break;
 
 		write_ptrs_available--;
 
+		/*
+		 * No sense queuing a read if the HSIC bridge was
+		 * closed in another thread
+		 */
 		if (!diag_hsic[index].hsic_ch)
 			break;
 
 		buf_in_hsic = diagmem_alloc(driver, READ_HSIC_BUF_SIZE,
 							index+POOL_TYPE_HSIC);
 		if (buf_in_hsic) {
+			/*
+			 * Initiate the read from the HSIC.  The HSIC read is
+			 * asynchronous.  Once the read is complete the read
+			 * callback function will be called.
+			 */
 			pr_debug("diag: read from HSIC\n");
 			num_reads_submitted++;
 			err = diag_bridge_read(hsic_data_bridge_map[index],
@@ -101,18 +130,27 @@ static void diag_read_hsic_work_fn(struct work_struct *work)
 			if (err) {
 				num_reads_submitted--;
 
-				
+				/* Return the buffer to the pool */
 				diagmem_free(driver, buf_in_hsic,
 						index+POOL_TYPE_HSIC);
 
 				if (__ratelimit(&rl))
 					pr_err("diag: Error initiating HSIC read, err: %d\n",
 					err);
+				/*
+				 * An error occurred, discontinue queuing
+				 * reads
+				 */
 				break;
 			}
 		}
 	} while (buf_in_hsic);
 
+	/*
+	 * If there are read buffers available and for some reason the
+	 * read was not queued, and if no unrecoverable error occurred
+	 * (-ENODEV is an unrecoverable error), then set up the next read
+	 */
 	if ((diag_hsic[index].count_hsic_pool <
 		diag_hsic[index].poolsize_hsic) &&
 		(num_reads_submitted == 0) && (err != -ENODEV) &&
@@ -162,13 +200,26 @@ static void diag_read_hsic_dci_work_fn(struct work_struct *work)
 		return;
 	}
 
+	/*
+	 * Queue up a read on the HSIC for all available buffers in the
+	 * pool, exhausting the pool.
+	 */
 	do {
+		/*
+		 * No sense queuing a read if the HSIC bridge was
+		 * closed in another thread
+		 */
 		if (!diag_hsic_dci[index].hsic_ch)
 			break;
 
 		buf_in_hsic = diagmem_alloc(driver, READ_HSIC_BUF_SIZE_DCI,
 					    POOL_TYPE_HSIC_DCI + index);
 		if (buf_in_hsic) {
+			/*
+			 * Initiate the read from the HSIC.  The HSIC read is
+			 * asynchronous.  Once the read is complete the read
+			 * callback function will be called.
+			 */
 			num_reads_submitted++;
 			err = diag_bridge_read(hsic_dci_bridge_map[index],
 					       (char *)buf_in_hsic,
@@ -176,17 +227,26 @@ static void diag_read_hsic_dci_work_fn(struct work_struct *work)
 			if (err) {
 				num_reads_submitted--;
 
-				
+				/* Return the buffer to the pool */
 				diagmem_free(driver, buf_in_hsic,
 					     POOL_TYPE_HSIC_DCI + index);
 
 				pr_err_ratelimited("diag: Error initiating HSIC read, err: %d\n",
 						   err);
+				/*
+				 * An error occurred, discontinue queuing
+				 * reads
+				 */
 				break;
 			}
 		}
 	} while (buf_in_hsic);
 
+	/*
+	 * If there are read buffers available and for some reason the
+	 * read was not queued, and if no unrecoverable error occurred
+	 * (-ENODEV is an unrecoverable error), then set up the next read
+	 */
 	if ((diag_hsic_dci[index].count_hsic_pool <
 		diag_hsic_dci[index].poolsize_hsic) &&
 		(num_reads_submitted == 0) && (err != -ENODEV) &&
@@ -203,12 +263,20 @@ static void diag_hsic_read_complete_callback(void *ctxt, char *buf,
 	static DEFINE_RATELIMIT_STATE(rl, 10*HZ, 1);
 
 	if (!diag_hsic[index].hsic_ch) {
+		/*
+		 * The HSIC channel is closed. Return the buffer to
+		 * the pool.  Do not send it on.
+		 */
 		diagmem_free(driver, buf, index+POOL_TYPE_HSIC);
 		pr_debug("diag: In %s: hsic_ch == 0, actual_size: %d\n",
 			__func__, actual_size);
 		return;
 	}
 
+	/*
+	 * Note that zero length is valid and still needs to be sent to
+	 * the USB only when we are logging data to the USB
+	 */
 	if ((actual_size > 0) ||
 		((actual_size == 0) && (driver->logging_mode == USB_MODE))) {
 		if (!buf) {
@@ -223,7 +291,7 @@ static void diag_hsic_read_complete_callback(void *ctxt, char *buf,
 				diag_ws_on_notify();
 			err = diag_device_write((void *)buf, index+HSIC_DATA,
 									NULL);
-			
+			/* If an error, return buffer to the pool */
 			if (err) {
 				if (driver->logging_mode == MEMORY_DEVICE_MODE)
 					diag_ws_release();
@@ -235,11 +303,24 @@ static void diag_hsic_read_complete_callback(void *ctxt, char *buf,
 			}
 		}
 	} else {
+		/*
+		 * The buffer has an error status associated with it. Do not
+		 * pass it on. Note that -ENOENT is sent when the diag bridge
+		 * is closed.
+		 */
 		diagmem_free(driver, buf, index+POOL_TYPE_HSIC);
 		pr_debug("diag: In %s: error status: %d\n", __func__,
 			actual_size);
 	}
 
+	/*
+	 * Actual Size is a negative error value when read complete
+	 * fails. Don't queue a read in this case. Doing so will not let
+	 * HSIC to goto suspend.
+	 *
+	 * Queue another read only when the read completes successfully
+	 * and Diag is either in Memory device mode or USB is connected.
+	 */
 	if (actual_size >= 0 && (driver->logging_mode == MEMORY_DEVICE_MODE ||
 				 diag_bridge[index].usb_connected)) {
 		queue_work(diag_bridge[index].wq,
@@ -253,6 +334,10 @@ static void diag_hsic_dci_read_complete_callback(void *ctxt, char *buf,
 	int index = (int)ctxt;
 
 	if (!diag_hsic_dci[index].hsic_ch) {
+		/*
+		 * The HSIC channel is closed. Return the buffer to
+		 * the pool.  Do not send it on.
+		 */
 		diagmem_free(driver, buf, POOL_TYPE_HSIC_DCI + index);
 		pr_debug("diag: In %s: hsic_ch == 0, actual_size: %d\n",
 			__func__, actual_size);
@@ -271,11 +356,21 @@ static void diag_hsic_dci_read_complete_callback(void *ctxt, char *buf,
 				  &diag_hsic_dci[index].diag_process_hsic_work);
 		}
 	} else {
+		/*
+		 * The buffer has an error status associated with it. Do not
+		 * pass it on. Note that -ENOENT is sent when the diag bridge
+		 * is closed.
+		 */
 		diagmem_free(driver, buf, POOL_TYPE_HSIC_DCI + index);
 		pr_debug("diag: In %s: error status: %d\n", __func__,
 			actual_size);
 	}
 
+	/*
+	 * Actual Size can be negative error codes. In such cases, don't
+	 * queue another read. The HSIC channel can goto suspend.
+	 * Queuing a read will prevent HSIC from going to suspend.
+	 */
 	if (actual_size >= 0)
 		queue_work(diag_bridge_dci[index].wq,
 			   &diag_hsic_dci[index].diag_read_hsic_work);
@@ -286,7 +381,7 @@ static void diag_hsic_write_complete_callback(void *ctxt, char *buf,
 {
 	int index = (int)ctxt;
 
-	
+	/* The write of the data to the HSIC bridge is complete */
 	diag_hsic[index].in_busy_hsic_write = 0;
 	wake_up_interruptible(&driver->wait_q);
 
@@ -309,7 +404,7 @@ static void diag_hsic_dci_write_complete_callback(void *ctxt, char *buf,
 {
 	int index = (int)ctxt;
 
-	
+	/* The write of the data to the HSIC bridge is complete */
 	diag_hsic_dci[index].in_busy_hsic_write = 0;
 
 	if (!diag_hsic_dci[index].hsic_ch) {
@@ -331,10 +426,14 @@ static int diag_hsic_suspend(void *ctxt)
 	int index = (int)ctxt;
 	pr_debug("diag: hsic_suspend\n");
 
-	
+	/* Don't allow suspend if a write in the HSIC is in progress */
 	if (diag_hsic[index].in_busy_hsic_write)
 		return -EBUSY;
 
+	/*
+	 * Don't allow suspend if in MEMORY_DEVICE_MODE and if there
+	 * has been hsic data requested
+	 */
 	if (driver->logging_mode == MEMORY_DEVICE_MODE &&
 				diag_hsic[index].hsic_ch)
 		return -EBUSY;
@@ -349,7 +448,7 @@ static int diag_hsic_dci_suspend(void *ctxt)
 	int index = (int)ctxt;
 	pr_debug("diag: hsic_suspend\n");
 
-	
+	/* Don't allow suspend if a write in the HSIC is in progress */
 	if (diag_hsic_dci[index].in_busy_hsic_write)
 		return -EBUSY;
 
@@ -452,11 +551,12 @@ void diag_hsic_dci_close(int ch_id)
 	}
 }
 
+/* diagfwd_cancel_hsic is called to cancel outstanding read/writes */
 int diagfwd_cancel_hsic(int reopen)
 {
 	int err, i;
 
-	
+	/* Cancel it for all active HSIC bridges */
 	for (i = 0; i < MAX_HSIC_DATA_CH; i++) {
 		if (!diag_bridge[i].enabled)
 			continue;
@@ -493,12 +593,16 @@ int diagfwd_cancel_hsic(int reopen)
 	return 0;
 }
 
+/*
+ * diagfwd_write_complete_hsic is called after the asynchronous
+ * usb_diag_write() on mdm channel is complete
+ */
 int diagfwd_write_complete_hsic(struct diag_request *diag_write_ptr, int index)
 {
 	unsigned char *buf = (diag_write_ptr) ? diag_write_ptr->buf : NULL;
 
 	if (buf) {
-		
+		/* Return buffers to their pools */
 		diagmem_free(driver, (unsigned char *)buf, index +
 							POOL_TYPE_HSIC);
 		diagmem_free(driver, (unsigned char *)diag_write_ptr,
@@ -511,7 +615,7 @@ int diagfwd_write_complete_hsic(struct diag_request *diag_write_ptr, int index)
 		return 0;
 	}
 
-	
+	/* Read data from the HSIC */
 	queue_work(diag_bridge[index].wq,
 				&diag_hsic[index].diag_read_hsic_work);
 
@@ -545,7 +649,7 @@ void diag_read_usb_hsic_work_fn(struct work_struct *work)
 	if (!diag_hsic[index].in_busy_hsic_read_on_device &&
 	     !diag_hsic[index].in_busy_hsic_write) {
 		APPEND_DEBUG('x');
-		
+		/* Setup the next read from usb mdm channel */
 		diag_hsic[index].in_busy_hsic_read_on_device = 1;
 		diag_bridge[index].usb_read_ptr->buf =
 				 diag_bridge[index].usb_buf_out;
@@ -555,6 +659,9 @@ void diag_read_usb_hsic_work_fn(struct work_struct *work)
 				 diag_bridge[index].usb_read_ptr);
 		APPEND_DEBUG('y');
 	}
+	/* If for some reason there was no mdm channel read initiated,
+	 * queue up the reading of data from the mdm channel
+	 */
 
 	if (!diag_hsic[index].in_busy_hsic_read_on_device &&
 		(driver->logging_mode == USB_MODE))
@@ -595,12 +702,18 @@ static int diag_hsic_probe_data(int pdev_id)
 			(driver->logging_mode == MEMORY_DEVICE_MODE) ? 0 : 1;
 		diag_hsic[index].hsic_inited = 1;
 	}
+	/*
+	 * The probe function was called after the usb was connected
+	 * on the legacy channel OR ODL is turned on and hsic data is
+	 * requested. Communication over usb mdm and HSIC needs to be
+	 * turned on.
+	 */
 	if ((diag_bridge[index].usb_connected &&
 		(driver->logging_mode != MEMORY_DEVICE_MODE)) ||
 		((driver->logging_mode == MEMORY_DEVICE_MODE) &&
 		diag_hsic[index].hsic_data_requested)) {
 		if (diag_hsic[index].hsic_device_opened) {
-			
+			/* should not happen. close it before re-opening */
 			pr_warn("diag: HSIC channel already opened in probe\n");
 			diag_bridge_close(hsic_data_bridge_map[index]);
 		}
@@ -621,15 +734,15 @@ static int diag_hsic_probe_data(int pdev_id)
 		diag_hsic[index].in_busy_hsic_write = 0;
 
 		if (diag_bridge[index].usb_connected) {
-			
+			/* Poll USB mdm channel to check for data */
 			queue_work(diag_bridge[index].wq,
 				&diag_bridge[index].diag_read_work);
 		}
-		
+		/* Poll HSIC channel to check for data */
 		queue_work(diag_bridge[index].wq,
 			&diag_hsic[index].diag_read_hsic_work);
 	}
-	
+	/* The HSIC (diag_bridge) platform device driver is enabled */
 	diag_hsic[index].hsic_device_enabled = 1;
 	mutex_unlock(&diag_bridge[index].bridge_mutex);
 	return err;
@@ -702,6 +815,10 @@ static int diag_hsic_probe(struct platform_device *pdev)
 {
 	int err = 0;
 
+	/*
+	 * pdev->Id will indicate which HSIC is working. 0 stands for HSIC
+	 *  or CP1 1 indicates HS-USB or CP2
+	 */
 	pr_debug("diag: in %s, ch = %d\n", __func__, pdev->id);
 	if (pdev->id >= MAX_HSIC_CH) {
 		pr_alert("diag: No support for HSIC device, %d\n", pdev->id);

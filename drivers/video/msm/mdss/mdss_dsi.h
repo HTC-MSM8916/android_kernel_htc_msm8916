@@ -23,7 +23,7 @@
 #include "mdss_panel.h"
 #include "mdss_dsi_cmd.h"
 
-#define MMSS_SERDES_BASE_PHY 0x04f01000 
+#define MMSS_SERDES_BASE_PHY 0x04f01000 /* mmss (De)Serializer CFG */
 
 #define MIPI_OUTP(addr, data) writel_relaxed((data), (addr))
 #define MIPI_INP(addr) readl_relaxed(addr)
@@ -45,7 +45,7 @@
 #define MIPI_DSI_PANEL_720P_PT	8
 #define DSI_PANEL_MAX	8
 
-enum {		
+enum {		/* mipi dsi panel */
 	DSI_VIDEO_MODE,
 	DSI_CMD_MODE,
 };
@@ -149,10 +149,10 @@ enum dsi_pm_type {
 #define DSI_INTR_CMD_DMA_DONE_MASK	BIT(1)
 #define DSI_INTR_CMD_DMA_DONE		BIT(0)
 
-#define DSI_CMD_TRIGGER_NONE		0x0	
+#define DSI_CMD_TRIGGER_NONE		0x0	/* mdp trigger */
 #define DSI_CMD_TRIGGER_TE		0x02
 #define DSI_CMD_TRIGGER_SW		0x04
-#define DSI_CMD_TRIGGER_SW_SEOF		0x05	
+#define DSI_CMD_TRIGGER_SW_SEOF		0x05	/* cmd dma only */
 #define DSI_CMD_TRIGGER_SW_TE		0x06
 
 #define DSI_VIDEO_TERM  BIT(16)
@@ -168,8 +168,8 @@ struct dsiphy_pll_divider_config {
 	u32 clk_rate;
 	u32 fb_divider;
 	u32 ref_divider_ratio;
-	u32 bit_clk_divider;	
-	u32 byte_clk_divider;	
+	u32 bit_clk_divider;	/* oCLK1 */
+	u32 byte_clk_divider;	/* oCLK2 */
 	u32 analog_posDiv;
 	u32 digital_posDiv;
 };
@@ -247,6 +247,7 @@ enum {
 	DSI_CTRL_MAX,
 };
 
+/* DSI controller #0 is always treated as a master in broadcast mode */
 #define DSI_CTRL_MASTER		DSI_CTRL_0
 #define DSI_CTRL_SLAVE		DSI_CTRL_1
 
@@ -259,7 +260,7 @@ enum {
 #define DSI_EV_MDP_BUSY_RELEASE		0x80000000
 
 struct mdss_dsi_ctrl_pdata {
-	int ndx;	
+	int ndx;	/* panel_num */
 	int (*on) (struct mdss_panel_data *pdata);
 	int (*off) (struct mdss_panel_data *pdata);
 	int (*partial_update_fnc) (struct mdss_panel_data *pdata);
@@ -289,7 +290,7 @@ struct mdss_dsi_ctrl_pdata {
 	int disp_en_gpio;
 	int bklt_en_gpio;
 	int mode_gpio;
-	int bklt_ctrl;	
+	int bklt_ctrl;	/* backlight ctrl */
 	int pwm_period;
 	int pwm_pmic_gpio;
 	int pwm_lpg_chan;
@@ -420,10 +421,10 @@ int mdss_panel_get_dst_fmt(u32 bpp, char mipi_mode, u32 pixel_packing,
 static inline const char *__mdss_dsi_pm_name(enum dsi_pm_type module)
 {
 	switch (module) {
-	case DSI_CORE_PM:       return "DSI_CORE_PM";
-	case DSI_CTRL_PM:       return "DSI_CTRL_PM";
-	case DSI_PANEL_PM:      return "PANEL_PM";
-	default:                return "???";
+	case DSI_CORE_PM:	return "DSI_CORE_PM";
+	case DSI_CTRL_PM:	return "DSI_CTRL_PM";
+	case DSI_PANEL_PM:	return "PANEL_PM";
+	default:		return "???";
 	}
 }
 
@@ -431,10 +432,10 @@ static inline const char *__mdss_dsi_pm_supply_node_name(
 	enum dsi_pm_type module)
 {
 	switch (module) {
-	case DSI_CORE_PM:       return "qcom,core-supply-entries";
-	case DSI_CTRL_PM:       return "qcom,ctrl-supply-entries";
-	case DSI_PANEL_PM:      return "qcom,panel-supply-entries";
-	default:                return "???";
+	case DSI_CORE_PM:	return "qcom,core-supply-entries";
+	case DSI_CTRL_PM:	return "qcom,ctrl-supply-entries";
+	case DSI_PANEL_PM:	return "qcom,panel-supply-entries";
+	default:		return "???";
 	}
 }
 
@@ -487,4 +488,4 @@ static inline bool mdss_dsi_ulps_feature_enabled(
 	return pdata->panel_info.ulps_feature_enabled;
 }
 
-#endif 
+#endif /* MDSS_DSI_H */

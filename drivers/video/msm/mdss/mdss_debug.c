@@ -33,7 +33,7 @@
 
 static int mdss_debug_base_open(struct inode *inode, struct file *file)
 {
-	
+	/* non-seekable */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 	file->private_data = inode->i_private;
 	return 0;
@@ -67,7 +67,7 @@ static ssize_t mdss_debug_base_offset_write(struct file *file,
 	if (copy_from_user(buf, user_buf, count))
 		return -EFAULT;
 
-	buf[count] = 0;	
+	buf[count] = 0;	/* end of string */
 
 	sscanf(buf, "%5x %x", &off, &cnt);
 
@@ -96,7 +96,7 @@ static ssize_t mdss_debug_base_offset_read(struct file *file,
 		return -ENODEV;
 
 	if (*ppos)
-		return 0;	
+		return 0;	/* the end */
 
 	len = snprintf(buf, sizeof(buf), "0x%08zx %zx\n", dbg->off, dbg->cnt);
 	if (len < 0)
@@ -105,7 +105,7 @@ static ssize_t mdss_debug_base_offset_read(struct file *file,
 	if (copy_to_user(buff, buf, len))
 		return -EFAULT;
 
-	*ppos += len;	
+	*ppos += len;	/* increase offset */
 
 	return len;
 }
@@ -128,7 +128,7 @@ static ssize_t mdss_debug_base_reg_write(struct file *file,
 	if (copy_from_user(buf, user_buf, count))
 		return -EFAULT;
 
-	buf[count] = 0;	
+	buf[count] = 0;	/* end of string */
 
 	cnt = sscanf(buf, "%zx %x", &off, &data);
 
@@ -205,7 +205,7 @@ static ssize_t mdss_debug_base_reg_read(struct file *file,
 	}
 
 	if (*ppos >= dbg->buf_len)
-		return 0; 
+		return 0; /* done reading */
 
 	len = min(count, dbg->buf_len - (size_t) *ppos);
 	if (copy_to_user(user_buf, dbg->buf + *ppos, len)) {
@@ -213,7 +213,7 @@ static ssize_t mdss_debug_base_reg_read(struct file *file,
 		return -EFAULT;
 	}
 
-	*ppos += len; 
+	*ppos += len; /* increase offset */
 
 	return len;
 }
@@ -288,7 +288,7 @@ off_fail:
 
 static int mdss_debug_stat_open(struct inode *inode, struct file *file)
 {
-	
+	/* non-seekable */
 	file->f_mode &= ~(FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE);
 	file->private_data = inode->i_private;
 	return 0;
@@ -307,7 +307,7 @@ static ssize_t mdss_debug_stat_read(struct file *file, char __user *buff,
 	char bp[512];
 
 	if (*ppos)
-		return 0;	
+		return 0;	/* the end */
 
 	len = sizeof(bp);
 
@@ -323,7 +323,7 @@ static ssize_t mdss_debug_stat_read(struct file *file, char __user *buff,
 	if (copy_to_user(buff, bp, tot))
 		return -EFAULT;
 
-	*ppos += tot;	
+	*ppos += tot;	/* increase offset */
 
 	return tot;
 }
@@ -354,14 +354,14 @@ static ssize_t mdss_debug_factor_write(struct file *file,
 	if (copy_from_user(buf, user_buf, count))
 		return -EFAULT;
 
-	buf[count] = 0;	
+	buf[count] = 0;	/* end of string */
 
 	if (strnchr(buf, count, '/')) {
-		
+		/* Parsing buf as fraction */
 		if (sscanf(buf, "%d/%d", &numer, &denom) != 2)
 			return -EFAULT;
 	} else {
-		
+		/* Parsing buf as percentage */
 		if (sscanf(buf, "%d", &numer) != 1)
 			return -EFAULT;
 		denom = 100;
@@ -388,7 +388,7 @@ static ssize_t mdss_debug_factor_read(struct file *file,
 		return -ENODEV;
 
 	if (*ppos)
-		return 0;	
+		return 0;	/* the end */
 
 	len = snprintf(buf, sizeof(buf), "%d/%d\n",
 			factor->numer, factor->denom);
@@ -398,7 +398,7 @@ static ssize_t mdss_debug_factor_read(struct file *file,
 	if (copy_to_user(buff, buf, len))
 		return -EFAULT;
 
-	*ppos += len;	
+	*ppos += len;	/* increase offset */
 
 	return len;
 }
@@ -614,7 +614,7 @@ static inline struct mdss_mdp_misr_map *mdss_misr_get_map(u32 block_id,
 	}
 
 	if (mdata->mdp_rev >= MDSS_MDP_HW_REV_106) {
-		
+		/* Use updated MDP Interface MISR Block address offset */
 		if (block_id == DISPLAY_MISR_MDP) {
 			if (ctl) {
 				mixer = mdss_mdp_mixer_get(ctl,
@@ -634,7 +634,7 @@ static inline struct mdss_mdp_misr_map *mdss_misr_get_map(u32 block_id,
 				value_reg = intf_base +
 					MDSS_MDP_INTF_MISR_SIGNATURE;
 			}
-			
+			/* For msm8916, additional offset of 0x10 is required */
 			if (mdata->mdp_rev == MDSS_MDP_HW_REV_106) {
 				ctrl_reg += 0x10;
 				value_reg += 0x10;
@@ -711,7 +711,7 @@ int mdss_misr_set(struct mdss_data_type *mdata,
 
 	writel_relaxed(MDSS_MDP_LP_MISR_CTRL_STATUS_CLEAR,
 			mdata->mdp_base + map->ctrl_reg);
-	
+	/* ensure clear is done */
 	wmb();
 
 	memset(map->crc_ping, 0, sizeof(map->crc_ping));
@@ -804,6 +804,7 @@ int mdss_misr_get(struct mdss_data_type *mdata,
 	return ret;
 }
 
+/* This function is expected to be called from interrupt context */
 void mdss_misr_crc_collect(struct mdss_data_type *mdata, int block_id)
 {
 	struct mdss_mdp_misr_map *map;

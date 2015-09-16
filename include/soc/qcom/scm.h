@@ -31,6 +31,7 @@
 #define SCM_FUSE_READ			0x7
 #define SCM_CMD_HDCP			0x01
 
+/* SCM Features */
 #define SCM_SVC_SEC_CAMERA		0xD
 
 #define TZ_HTC_SVC_READ_SIMLOCK_MASK	0x0D

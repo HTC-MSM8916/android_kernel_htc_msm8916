@@ -57,6 +57,7 @@ int mdss_qpic_panel_off(struct mdss_panel_data *pdata,
 	struct qpic_panel_io_desc *panel_io);
 int qpic_register_panel(struct mdss_panel_data *pdata);
 
+/* Structure that defines an SPS end point for a BAM pipe. */
 struct qpic_sps_endpt {
 	struct sps_pipe *handle;
 	struct sps_connect config;
@@ -94,4 +95,4 @@ u32 qpic_send_frame(
 
 u32 qpic_panel_get_framerate(void);
 
-#endif 
+#endif /* MDSS_QPIC_H */

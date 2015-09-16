@@ -81,9 +81,9 @@ struct mdss_perf_tune {
 #define MDSS_IRQ_REQ		0
 
 struct mdss_intr {
-	
+	/* requested intr */
 	u32 req;
-	
+	/* currently enabled intr */
 	u32 curr;
 	int state;
 	spinlock_t lock;
@@ -211,7 +211,6 @@ struct mdss_data_type {
 	int handoff_pending;
 	bool idle_pc;
 	struct mdss_perf_tune perf_tune;
-
 	bool traffic_shaper_en;
 };
 extern struct mdss_data_type *mdss_res;
@@ -261,4 +260,4 @@ static inline int mdss_get_iommu_domain(u32 type)
 
 	return mdss_res->iommu_map[type].domain_idx;
 }
-#endif 
+#endif /* MDSS_H */

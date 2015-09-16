@@ -26,6 +26,17 @@
 #include "mdss_panel.h"
 #include "mdss_wb.h"
 
+/**
+ * mdss_wb_check_params - check new panel info params
+ * @pdata: current panel information
+ * @new: updates to panel info
+ *
+ * Checks if there are any changes that require panel reconfiguration
+ * in order to be reflected on writeback buffer.
+ *
+ * Return negative errno if invalid input, zero if there is no panel reconfig
+ * needed and non-zero if reconfiguration is needed.
+ */
 static int mdss_wb_check_params(struct mdss_panel_data *pdata,
 	struct mdss_panel_info *new)
 {
@@ -116,6 +127,12 @@ static int mdss_wb_probe(struct platform_device *pdev)
 	if (!pdev->dev.of_node)
 		return -ENODEV;
 
+	/*
+	 * In case HDMI is configured as primary, do not configure
+	 * WB. Currently there is no requirement for any other panel
+	 * in case HDMI is primary. Will revisit if WB is needed with
+	 * HDMI as primary.
+	 */
 	pan_cfg = mdss_panel_intf_type(MDSS_PANEL_INTF_HDMI);
 	if (IS_ERR(pan_cfg)) {
 		return PTR_ERR(pan_cfg);

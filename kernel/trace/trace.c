@@ -44,12 +44,27 @@
 #include "trace.h"
 #include "trace_output.h"
 
+/*
+ * On boot up, the ring buffer is set to the minimum size, so that
+ * we do not waste memory on systems that are not using tracing.
+ */
 bool ring_buffer_expanded;
 
+/*
+ * We need to change this state when a selftest is running.
+ * A selftest will lurk into the ring-buffer to count the
+ * entries inserted during the selftest although some concurrent
+ * insertions into the ring-buffer such as trace_printk could occurred
+ * at the same time, giving false positive or negative results.
+ */
 static bool __read_mostly tracing_selftest_running;
 
+/*
+ * If a tracer is running, we do not want to run SELFTEST.
+ */
 bool __read_mostly tracing_selftest_disabled;
 
+/* For tracers that don't implement custom flags */
 static struct tracer_opt dummy_tracer_opt[] = {
 	{ }
 };
@@ -71,12 +86,33 @@ static int dummy_set_flag(u32 old_flags, u32 bit, int set)
  */
 static DEFINE_PER_CPU(bool, trace_cmdline_save);
 
+/*
+ * Kill all tracing for good (never come back).
+ * It is initialized to 1 but will turn to zero if the initialization
+ * of the tracer is successful. But that is the only place that sets
+ * this back to zero.
+ */
 static int tracing_disabled = 1;
 
 DEFINE_PER_CPU(int, ftrace_cpu_disabled);
 
 cpumask_var_t __read_mostly	tracing_buffer_mask;
 
+/*
+ * ftrace_dump_on_oops - variable to dump ftrace buffer on oops
+ *
+ * If there is an oops (or kernel panic) and the ftrace_dump_on_oops
+ * is set, then ftrace_dump is called. This will output the contents
+ * of the ftrace buffers to the console.  This is very useful for
+ * capturing traces that lead to crashes and outputing it to a
+ * serial console.
+ *
+ * It is default off, but you can enable it with either specifying
+ * "ftrace_dump_on_oops" in the kernel command line, or setting
+ * /proc/sys/kernel/ftrace_dump_on_oops
+ * Set 1 if you want to dump buffers of all CPUs
+ * Set 2 if you want to dump the buffer of the CPU that triggered oops
+ */
 
 enum ftrace_dump_mode ftrace_dump_on_oops;
 
@@ -92,7 +128,7 @@ static int __init set_cmdline_ftrace(char *str)
 {
 	strlcpy(bootup_tracer_buf, str, MAX_TRACER_SIZE);
 	default_bootup_tracer = bootup_tracer_buf;
-	
+	/* We are using ftrace early, expand it */
 	ring_buffer_expanded = true;
 	return 1;
 }
@@ -117,7 +153,7 @@ __setup("ftrace_dump_on_oops", set_ftrace_dump_on_oops);
 static int __init boot_alloc_snapshot(char *str)
 {
 	allocate_snapshot = true;
-	
+	/* We also need the main ring buffer expanded */
 	ring_buffer_expanded = true;
 	return 1;
 }
@@ -142,6 +178,18 @@ unsigned long long ns2usecs(cycle_t nsec)
 	return nsec;
 }
 
+/*
+ * The global_trace is the descriptor that holds the tracing
+ * buffers for the live tracing. For each CPU, it contains
+ * a link list of pages that will store trace entries. The
+ * page descriptor of the pages in the memory is used to hold
+ * the link list by linking the lru item in the page descriptor
+ * to each of the pages in the buffer per CPU.
+ *
+ * For each active CPU there is a data field that holds the
+ * pages for the buffer for that CPU. Each CPU has the same number
+ * of pages allocated for its buffer.
+ */
 static struct trace_array	global_trace;
 
 LIST_HEAD(ftrace_trace_arrays);
@@ -189,7 +237,7 @@ cycle_t buffer_ftrace_now(struct trace_buffer *buf, int cpu)
 {
 	u64 ts;
 
-	
+	/* Early boot up does not have a buffer yet */
 	if (!buf->buffer)
 		return trace_clock_local();
 
@@ -204,20 +252,69 @@ cycle_t ftrace_now(int cpu)
 	return buffer_ftrace_now(&global_trace.trace_buffer, cpu);
 }
 
+/**
+ * tracing_is_enabled - Show if global_trace has been disabled
+ *
+ * Shows if the global trace has been enabled or not. It uses the
+ * mirror flag "buffer_disabled" to be used in fast paths such as for
+ * the irqsoff tracer. But it may be inaccurate due to races. If you
+ * need to know the accurate state, use tracing_is_on() which is a little
+ * slower, but accurate.
+ */
 int tracing_is_enabled(void)
 {
+	/*
+	 * For quick access (irqsoff uses this in fast path), just
+	 * return the mirror variable of the state of the ring buffer.
+	 * It's a little racy, but we don't really care.
+	 */
 	smp_rmb();
 	return !global_trace.buffer_disabled;
 }
 
-#define TRACE_BUF_SIZE_DEFAULT	1441792UL 
+/*
+ * trace_buf_size is the size in bytes that is allocated
+ * for a buffer. Note, the number of bytes is always rounded
+ * to page size.
+ *
+ * This number is purposely set to a low number of 16384.
+ * If the dump on oops happens, it will be much appreciated
+ * to not have to wait for all that output. Anyway this can be
+ * boot time and run time configurable.
+ */
+#define TRACE_BUF_SIZE_DEFAULT	1441792UL /* 16384 * 88 (sizeof(entry)) */
 
 static unsigned long		trace_buf_size = TRACE_BUF_SIZE_DEFAULT;
 
+/* trace_types holds a link list of available tracers. */
 static struct tracer		*trace_types __read_mostly;
 
+/*
+ * trace_types_lock is used to protect the trace_types list.
+ */
 DEFINE_MUTEX(trace_types_lock);
 
+/*
+ * serialize the access of the ring buffer
+ *
+ * ring buffer serializes readers, but it is low level protection.
+ * The validity of the events (which returns by ring_buffer_peek() ..etc)
+ * are not protected by ring buffer.
+ *
+ * The content of events may become garbage if we allow other process consumes
+ * these events concurrently:
+ *   A) the page of the consumed events may become a normal page
+ *      (not reader page) in ring buffer, and this page will be rewrited
+ *      by events producer.
+ *   B) The page of the consumed events may become a page for splice_read,
+ *      and this page will be returned to system.
+ *
+ * These primitives allow multi process access to different cpu ring buffer
+ * concurrently.
+ *
+ * These primitives don't distinguish read-only and read-consume access.
+ * Multi read-only access are also serialized.
+ */
 
 #ifdef CONFIG_SMP
 static DECLARE_RWSEM(all_cpu_access_lock);
@@ -226,15 +323,15 @@ static DEFINE_PER_CPU(struct mutex, cpu_access_lock);
 static inline void trace_access_lock(int cpu)
 {
 	if (cpu == RING_BUFFER_ALL_CPUS) {
-		
+		/* gain it for accessing the whole ring buffer. */
 		down_write(&all_cpu_access_lock);
 	} else {
-		
+		/* gain it for accessing a cpu ring buffer. */
 
-		
+		/* Firstly block other trace_access_lock(RING_BUFFER_ALL_CPUS). */
 		down_read(&all_cpu_access_lock);
 
-		
+		/* Secondly block other access to this @cpu ring buffer. */
 		mutex_lock(&per_cpu(cpu_access_lock, cpu));
 	}
 }
@@ -279,6 +376,7 @@ static inline void trace_access_lock_init(void)
 
 #endif
 
+/* trace_flags holds trace_options default values */
 unsigned long trace_flags = TRACE_ITER_PRINT_PARENT | TRACE_ITER_PRINTK |
 	TRACE_ITER_ANNOTATE | TRACE_ITER_CONTEXT_INFO | TRACE_ITER_SLEEP_TIME |
 	TRACE_ITER_GRAPH_TIME | TRACE_ITER_RECORD_CMD | TRACE_ITER_OVERWRITE |
@@ -288,17 +386,37 @@ void tracer_tracing_on(struct trace_array *tr)
 {
 	if (tr->trace_buffer.buffer)
 		ring_buffer_record_on(tr->trace_buffer.buffer);
+	/*
+	 * This flag is looked at when buffers haven't been allocated
+	 * yet, or by some tracers (like irqsoff), that just want to
+	 * know if the ring buffer has been disabled, but it can handle
+	 * races of where it gets disabled but we still do a record.
+	 * As the check is in the fast path of the tracers, it is more
+	 * important to be fast than accurate.
+	 */
 	tr->buffer_disabled = 0;
-	
+	/* Make the flag seen by readers */
 	smp_wmb();
 }
 
+/**
+ * tracing_on - enable tracing buffers
+ *
+ * This function enables tracing buffers that may have been
+ * disabled with tracing_off.
+ */
 void tracing_on(void)
 {
 	tracer_tracing_on(&global_trace);
 }
 EXPORT_SYMBOL_GPL(tracing_on);
 
+/**
+ * __trace_puts - write a constant string into the trace buffer.
+ * @ip:	   The address of the caller
+ * @str:   The constant string to write
+ * @size:  The size of the string.
+ */
 int __trace_puts(unsigned long ip, const char *str, int size)
 {
 	struct ring_buffer_event *event;
@@ -307,7 +425,7 @@ int __trace_puts(unsigned long ip, const char *str, int size)
 	unsigned long irq_flags;
 	int alloc;
 
-	alloc = sizeof(*entry) + size + 2; 
+	alloc = sizeof(*entry) + size + 2; /* possible \n added */
 
 	local_save_flags(irq_flags);
 	buffer = global_trace.trace_buffer.buffer;
@@ -321,7 +439,7 @@ int __trace_puts(unsigned long ip, const char *str, int size)
 
 	memcpy(&entry->buf, str, size);
 
-	
+	/* Add a newline if necessary */
 	if (entry->buf[size - 1] != '\n') {
 		entry->buf[size] = '\n';
 		entry->buf[size + 1] = '\0';
@@ -337,6 +455,11 @@ int __trace_puts(unsigned long ip, const char *str, int size)
 }
 EXPORT_SYMBOL_GPL(__trace_puts);
 
+/**
+ * __trace_bputs - write the pointer to a constant string into trace buffer
+ * @ip:	   The address of the caller
+ * @str:   The constant string to write to the buffer to
+ */
 int __trace_bputs(unsigned long ip, const char *str)
 {
 	struct ring_buffer_event *event;
@@ -364,6 +487,20 @@ int __trace_bputs(unsigned long ip, const char *str)
 EXPORT_SYMBOL_GPL(__trace_bputs);
 
 #ifdef CONFIG_TRACER_SNAPSHOT
+/**
+ * trace_snapshot - take a snapshot of the current buffer.
+ *
+ * This causes a swap between the snapshot buffer and the current live
+ * tracing buffer. You can use this to take snapshots of the live
+ * trace when some condition is triggered, but continue to trace.
+ *
+ * Note, make sure to allocate the snapshot with either
+ * a tracing_snapshot_alloc(), or by doing it manually
+ * with: echo 1 > /sys/kernel/debug/tracing/snapshot
+ *
+ * If the snapshot buffer is not allocated, it will stop tracing.
+ * Basically making a permanent snapshot.
+ */
 void tracing_snapshot(void)
 {
 	struct trace_array *tr = &global_trace;
@@ -383,7 +520,7 @@ void tracing_snapshot(void)
 		return;
 	}
 
-	
+	/* Note, snapshot can not be used when the tracer uses it */
 	if (tracer->use_max_tr) {
 		internal_trace_puts("*** LATENCY TRACER ACTIVE ***\n");
 		internal_trace_puts("*** Can not use snapshot (sorry) ***\n");
@@ -406,7 +543,7 @@ static int alloc_snapshot(struct trace_array *tr)
 
 	if (!tr->allocated_snapshot) {
 
-		
+		/* allocate spare buffer */
 		ret = resize_buffer_duplicate_size(&tr->max_buffer,
 				   &tr->trace_buffer, RING_BUFFER_ALL_CPUS);
 		if (ret < 0)
@@ -420,12 +557,28 @@ static int alloc_snapshot(struct trace_array *tr)
 
 void free_snapshot(struct trace_array *tr)
 {
+	/*
+	 * We don't free the ring buffer. instead, resize it because
+	 * The max_tr ring buffer has some state (e.g. ring->clock) and
+	 * we want preserve it.
+	 */
 	ring_buffer_resize(tr->max_buffer.buffer, 1, RING_BUFFER_ALL_CPUS);
 	set_buffer_entries(&tr->max_buffer, 1);
 	tracing_reset_online_cpus(&tr->max_buffer);
 	tr->allocated_snapshot = false;
 }
 
+/**
+ * trace_snapshot_alloc - allocate and take a snapshot of the current buffer.
+ *
+ * This is similar to trace_snapshot(), but it will allocate the
+ * snapshot buffer if it isn't already allocated. Use this only
+ * where it is safe to sleep, as the allocation may sleep.
+ *
+ * This causes a swap between the snapshot buffer and the current live
+ * tracing buffer. You can use this to take snapshots of the live
+ * trace when some condition is triggered, but continue to trace.
+ */
 void tracing_snapshot_alloc(void)
 {
 	struct trace_array *tr = &global_trace;
@@ -446,27 +599,49 @@ void tracing_snapshot(void)
 EXPORT_SYMBOL_GPL(tracing_snapshot);
 void tracing_snapshot_alloc(void)
 {
-	
+	/* Give warning */
 	tracing_snapshot();
 }
 EXPORT_SYMBOL_GPL(tracing_snapshot_alloc);
-#endif 
+#endif /* CONFIG_TRACER_SNAPSHOT */
 
 void tracer_tracing_off(struct trace_array *tr)
 {
 	if (tr->trace_buffer.buffer)
 		ring_buffer_record_off(tr->trace_buffer.buffer);
+	/*
+	 * This flag is looked at when buffers haven't been allocated
+	 * yet, or by some tracers (like irqsoff), that just want to
+	 * know if the ring buffer has been disabled, but it can handle
+	 * races of where it gets disabled but we still do a record.
+	 * As the check is in the fast path of the tracers, it is more
+	 * important to be fast than accurate.
+	 */
 	tr->buffer_disabled = 1;
-	
+	/* Make the flag seen by readers */
 	smp_wmb();
 }
 
+/**
+ * tracing_off - turn off tracing buffers
+ *
+ * This function stops the tracing buffers from recording data.
+ * It does not disable any overhead the tracers themselves may
+ * be causing. This function simply causes all recording to
+ * the ring buffers to fail.
+ */
 void tracing_off(void)
 {
 	tracer_tracing_off(&global_trace);
 }
 EXPORT_SYMBOL_GPL(tracing_off);
 
+/**
+ * tracer_tracing_is_on - show real state of ring buffer enabled
+ * @tr : the trace array to know if ring buffer is enabled
+ *
+ * Shows real state of the ring buffer if it is enabled or not.
+ */
 int tracer_tracing_is_on(struct trace_array *tr)
 {
 	if (tr->trace_buffer.buffer)
@@ -474,6 +649,9 @@ int tracer_tracing_is_on(struct trace_array *tr)
 	return !tr->buffer_disabled;
 }
 
+/**
+ * tracing_is_on - show state of ring buffers enabled
+ */
 int tracing_is_on(void)
 {
 	return tracer_tracing_is_on(&global_trace);
@@ -487,7 +665,7 @@ static int __init set_buf_size(char *str)
 	if (!str)
 		return 0;
 	buf_size = memparse(str, &str);
-	
+	/* nr_entries can not be zero */
 	if (buf_size == 0)
 		return 0;
 	trace_buf_size = buf_size;
@@ -515,6 +693,7 @@ unsigned long nsecs_to_usecs(unsigned long nsecs)
 	return nsecs / 1000;
 }
 
+/* These must match the bit postions in trace_iterator_flags */
 static const char *trace_options[] = {
 	"print-parent",
 	"sym-offset",
@@ -549,7 +728,7 @@ static const char *trace_options[] = {
 static struct {
 	u64 (*func)(void);
 	const char *name;
-	int in_ns;		
+	int in_ns;		/* is this clock in nanoseconds? */
 } trace_clocks[] = {
 	{ trace_clock_local,	"local",	1 },
 	{ trace_clock_global,	"global",	1 },
@@ -559,6 +738,9 @@ static struct {
 	ARCH_TRACE_CLOCKS
 };
 
+/*
+ * trace_parser_get_init - gets the buffer for trace parser
+ */
 int trace_parser_get_init(struct trace_parser *parser, int size)
 {
 	memset(parser, 0, sizeof(*parser));
@@ -571,11 +753,25 @@ int trace_parser_get_init(struct trace_parser *parser, int size)
 	return 0;
 }
 
+/*
+ * trace_parser_put - frees the buffer for trace parser
+ */
 void trace_parser_put(struct trace_parser *parser)
 {
 	kfree(parser->buffer);
 }
 
+/*
+ * trace_get_user - reads the user input string separated by  space
+ * (matched by isspace(ch))
+ *
+ * For each string found the 'struct trace_parser' is updated,
+ * and the function returns.
+ *
+ * Returns number of bytes read.
+ *
+ * See kernel/trace/trace.h for 'struct trace_parser' details.
+ */
 int trace_get_user(struct trace_parser *parser, const char __user *ubuf,
 	size_t cnt, loff_t *ppos)
 {
@@ -593,8 +789,12 @@ int trace_get_user(struct trace_parser *parser, const char __user *ubuf,
 	read++;
 	cnt--;
 
+	/*
+	 * The parser is not finished with the last write,
+	 * continue reading the user input without skipping spaces.
+	 */
 	if (!parser->cont) {
-		
+		/* skip white space */
 		while (cnt && isspace(ch)) {
 			ret = get_user(ch, ubuf++);
 			if (ret)
@@ -613,7 +813,7 @@ int trace_get_user(struct trace_parser *parser, const char __user *ubuf,
 		parser->idx = 0;
 	}
 
-	
+	/* read the non-space input */
 	while (cnt && !isspace(ch)) {
 		if (parser->idx < parser->size - 1)
 			parser->buffer[parser->idx++] = ch;
@@ -628,7 +828,7 @@ int trace_get_user(struct trace_parser *parser, const char __user *ubuf,
 		cnt--;
 	}
 
-	
+	/* We either got finished input or we have to wait for another call. */
 	if (isspace(ch)) {
 		parser->buffer[parser->idx] = 0;
 		parser->cont = false;
@@ -687,6 +887,19 @@ static ssize_t trace_seq_to_buffer(struct trace_seq *s, void *buf, size_t cnt)
 	return cnt;
 }
 
+/*
+ * ftrace_max_lock is used to protect the swapping of buffers
+ * when taking a max snapshot. The buffers themselves are
+ * protected by per_cpu spinlocks. But the action of the swap
+ * needs its own lock.
+ *
+ * This is defined as a arch_spinlock_t in order to help
+ * with performance when lockdep debugging is enabled.
+ *
+ * It is also used in other places outside the update_max_tr
+ * so it needs to be defined outside of the
+ * CONFIG_TRACER_MAX_TRACE.
+ */
 static arch_spinlock_t ftrace_max_lock =
 	(arch_spinlock_t)__ARCH_SPIN_LOCK_UNLOCKED;
 
@@ -695,6 +908,11 @@ unsigned long __read_mostly	tracing_thresh;
 #ifdef CONFIG_TRACER_MAX_TRACE
 unsigned long __read_mostly	tracing_max_latency;
 
+/*
+ * Copy the new maximum trace into the separate maximum-trace
+ * structure. (this way the maximum trace is permanently saved,
+ * for later retrieval via /sys/kernel/debug/tracing/latency_trace)
+ */
 static void
 __update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu)
 {
@@ -712,6 +930,10 @@ __update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu)
 
 	memcpy(max_data->comm, tsk->comm, TASK_COMM_LEN);
 	max_data->pid = tsk->pid;
+	/*
+	 * If tsk == current, then use current_uid(), as that does not use
+	 * RCU. The irq tracer can be called out of RCU scope.
+	 */
 	if (tsk == current)
 		max_data->uid = current_uid();
 	else
@@ -721,10 +943,19 @@ __update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu)
 	max_data->policy = tsk->policy;
 	max_data->rt_priority = tsk->rt_priority;
 
-	
+	/* record this tasks comm */
 	tracing_record_cmdline(tsk);
 }
 
+/**
+ * update_max_tr - snapshot all trace buffers from global_trace to max_tr
+ * @tr: tracer
+ * @tsk: the task with the latency
+ * @cpu: The cpu that initiated the trace.
+ *
+ * Flip the buffers between the @tr and the max_tr and record information
+ * about which task was the cause of this latency.
+ */
 void
 update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu)
 {
@@ -736,7 +967,7 @@ update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu)
 	WARN_ON_ONCE(!irqs_disabled());
 
 	if (!tr->allocated_snapshot) {
-		
+		/* Only the nop tracer should hit this when disabling */
 		WARN_ON_ONCE(tr->current_trace != &nop_trace);
 		return;
 	}
@@ -751,6 +982,14 @@ update_max_tr(struct trace_array *tr, struct task_struct *tsk, int cpu)
 	arch_spin_unlock(&ftrace_max_lock);
 }
 
+/**
+ * update_max_tr_single - only copy one trace over, and reset the rest
+ * @tr - tracer
+ * @tsk - task with the latency
+ * @cpu - the cpu of the buffer to copy.
+ *
+ * Flip the trace of a single CPU buffer between the @tr and the max_tr.
+ */
 void
 update_max_tr_single(struct trace_array *tr, struct task_struct *tsk, int cpu)
 {
@@ -761,7 +1000,7 @@ update_max_tr_single(struct trace_array *tr, struct task_struct *tsk, int cpu)
 
 	WARN_ON_ONCE(!irqs_disabled());
 	if (!tr->allocated_snapshot) {
-		
+		/* Only the nop tracer should hit this when disabling */
 		WARN_ON_ONCE(tr->current_trace != &nop_trace);
 		return;
 	}
@@ -771,6 +1010,12 @@ update_max_tr_single(struct trace_array *tr, struct task_struct *tsk, int cpu)
 	ret = ring_buffer_swap_cpu(tr->max_buffer.buffer, tr->trace_buffer.buffer, cpu);
 
 	if (ret == -EBUSY) {
+		/*
+		 * We failed to swap the buffer due to a commit taking
+		 * place on this CPU. We fail to record, but we reset
+		 * the max trace buffer (no one writes directly to it)
+		 * and flag that it failed.
+		 */
 		trace_array_printk_buf(tr->max_buffer.buffer, _THIS_IP_,
 			"Failed to swap buffers due to commit in progress\n");
 	}
@@ -780,11 +1025,11 @@ update_max_tr_single(struct trace_array *tr, struct task_struct *tsk, int cpu)
 	__update_max_tr(tr, tsk, cpu);
 	arch_spin_unlock(&ftrace_max_lock);
 }
-#endif 
+#endif /* CONFIG_TRACER_MAX_TRACE */
 
 static void default_wait_pipe(struct trace_iterator *iter)
 {
-	
+	/* Iterators are static, they should be filled or empty */
 	if (trace_buffer_iter(iter, iter->cpu_file))
 		return;
 
@@ -801,13 +1046,20 @@ static int run_tracer_selftest(struct tracer *type)
 	if (!type->selftest || tracing_selftest_disabled)
 		return 0;
 
+	/*
+	 * Run a selftest on this tracer.
+	 * Here we reset the trace buffer, and set the current
+	 * tracer to be this tracer. The tracer can then run some
+	 * internal tracing to verify that everything is in order.
+	 * If we fail, we do not register this tracer.
+	 */
 	tracing_reset_online_cpus(&tr->trace_buffer);
 
 	tr->current_trace = type;
 
 #ifdef CONFIG_TRACER_MAX_TRACE
 	if (type->use_max_tr) {
-		
+		/* If we expanded the buffers, make sure the max is expanded too */
 		if (ring_buffer_expanded)
 			ring_buffer_resize(tr->max_buffer.buffer, trace_buf_size,
 					   RING_BUFFER_ALL_CPUS);
@@ -815,25 +1067,25 @@ static int run_tracer_selftest(struct tracer *type)
 	}
 #endif
 
-	
+	/* the test is responsible for initializing and enabling */
 	pr_info("Testing tracer %s: ", type->name);
 	ret = type->selftest(type, tr);
-	
+	/* the test is responsible for resetting too */
 	tr->current_trace = saved_tracer;
 	if (ret) {
 		printk(KERN_CONT "FAILED!\n");
-		
+		/* Add the warning after printing 'FAILED' */
 		WARN_ON(1);
 		return -1;
 	}
-	
+	/* Only reset on passing, to avoid touching corrupted buffers */
 	tracing_reset_online_cpus(&tr->trace_buffer);
 
 #ifdef CONFIG_TRACER_MAX_TRACE
 	if (type->use_max_tr) {
 		tr->allocated_snapshot = false;
 
-		
+		/* Shrink the max buffer again */
 		if (ring_buffer_expanded)
 			ring_buffer_resize(tr->max_buffer.buffer, 1,
 					   RING_BUFFER_ALL_CPUS);
@@ -848,8 +1100,14 @@ static inline int run_tracer_selftest(struct tracer *type)
 {
 	return 0;
 }
-#endif 
+#endif /* CONFIG_FTRACE_STARTUP_TEST */
 
+/**
+ * register_tracer - register a tracer with the ftrace system.
+ * @type - the plugin for the tracer
+ *
+ * Register a new plugin tracer.
+ */
 int register_tracer(struct tracer *type)
 {
 	struct tracer *t;
@@ -871,7 +1129,7 @@ int register_tracer(struct tracer *type)
 
 	for (t = trace_types; t; t = t->next) {
 		if (strcmp(type->name, t->name) == 0) {
-			
+			/* already found */
 			pr_info("Tracer %s already registered\n",
 				type->name);
 			ret = -1;
@@ -907,10 +1165,10 @@ int register_tracer(struct tracer *type)
 		goto out_unlock;
 
 	printk(KERN_INFO "Starting tracer '%s'\n", type->name);
-	
+	/* Do we want this tracer to start on bootup? */
 	tracing_set_tracer(type->name);
 	default_bootup_tracer = NULL;
-	
+	/* disable other selftests, since this will break it. */
 	tracing_selftest_disabled = true;
 #ifdef CONFIG_FTRACE_STARTUP_TEST
 	printk(KERN_INFO "Disabling FTRACE selftests due to running tracer '%s'\n",
@@ -930,7 +1188,7 @@ void tracing_reset(struct trace_buffer *buf, int cpu)
 
 	ring_buffer_record_disable(buffer);
 
-	
+	/* Make sure all commits have finished */
 	synchronize_sched();
 	ring_buffer_reset_cpu(buffer, cpu);
 
@@ -947,7 +1205,7 @@ void tracing_reset_online_cpus(struct trace_buffer *buf)
 
 	ring_buffer_record_disable(buffer);
 
-	
+	/* Make sure all commits have finished */
 	synchronize_sched();
 
 	buf->time_start = buffer_ftrace_now(buf, buf->cpu);
@@ -958,6 +1216,7 @@ void tracing_reset_online_cpus(struct trace_buffer *buf)
 	ring_buffer_record_enable(buffer);
 }
 
+/* Must have trace_types_lock held */
 void tracing_reset_all_online_cpus(void)
 {
 	struct trace_array *tr;
@@ -979,6 +1238,7 @@ static unsigned saved_tgids[SAVED_CMDLINES];
 static int cmdline_idx;
 static arch_spinlock_t trace_cmdline_lock = __ARCH_SPIN_LOCK_UNLOCKED;
 
+/* temporary disable recording */
 static atomic_t trace_record_cmdline_disabled __read_mostly;
 
 static void trace_init_cmdlines(void)
@@ -993,6 +1253,14 @@ int is_tracing_stopped(void)
 	return global_trace.stop_count;
 }
 
+/**
+ * ftrace_off_permanent - disable all ftrace code permanently
+ *
+ * This should only be called when a serious anomally has
+ * been detected.  This will turn off the function tracing,
+ * ring buffers, and other tracing utilites. It takes no
+ * locks and can be called from any context.
+ */
 void ftrace_off_permanent(void)
 {
 	tracing_disabled = 1;
@@ -1000,6 +1268,12 @@ void ftrace_off_permanent(void)
 	tracing_off_permanent();
 }
 
+/**
+ * tracing_start - quick start of the tracer
+ *
+ * If tracing is enabled but was stopped by tracing_stop,
+ * this will start the tracer back up.
+ */
 void tracing_start(void)
 {
 	struct ring_buffer *buffer;
@@ -1011,14 +1285,14 @@ void tracing_start(void)
 	raw_spin_lock_irqsave(&global_trace.start_lock, flags);
 	if (--global_trace.stop_count) {
 		if (global_trace.stop_count < 0) {
-			
+			/* Someone screwed up their debugging */
 			WARN_ON_ONCE(1);
 			global_trace.stop_count = 0;
 		}
 		goto out;
 	}
 
-	
+	/* Prevent the buffers from switching */
 	arch_spin_lock(&ftrace_max_lock);
 
 	buffer = global_trace.trace_buffer.buffer;
@@ -1046,7 +1320,7 @@ static void tracing_start_tr(struct trace_array *tr)
 	if (tracing_disabled)
 		return;
 
-	
+	/* If global, we need to also start the max tracer */
 	if (tr->flags & TRACE_ARRAY_FL_GLOBAL)
 		return tracing_start();
 
@@ -1054,7 +1328,7 @@ static void tracing_start_tr(struct trace_array *tr)
 
 	if (--tr->stop_count) {
 		if (tr->stop_count < 0) {
-			
+			/* Someone screwed up their debugging */
 			WARN_ON_ONCE(1);
 			tr->stop_count = 0;
 		}
@@ -1069,6 +1343,12 @@ static void tracing_start_tr(struct trace_array *tr)
 	raw_spin_unlock_irqrestore(&tr->start_lock, flags);
 }
 
+/**
+ * tracing_stop - quick stop of the tracer
+ *
+ * Light weight way to stop tracing. Use in conjunction with
+ * tracing_start.
+ */
 void tracing_stop(void)
 {
 	struct ring_buffer *buffer;
@@ -1079,7 +1359,7 @@ void tracing_stop(void)
 	if (global_trace.stop_count++)
 		goto out;
 
-	
+	/* Prevent the buffers from switching */
 	arch_spin_lock(&ftrace_max_lock);
 
 	buffer = global_trace.trace_buffer.buffer;
@@ -1103,7 +1383,7 @@ static void tracing_stop_tr(struct trace_array *tr)
 	struct ring_buffer *buffer;
 	unsigned long flags;
 
-	
+	/* If global, we need to also stop the max tracer */
 	if (tr->flags & TRACE_ARRAY_FL_GLOBAL)
 		return tracing_stop();
 
@@ -1128,6 +1408,12 @@ static void trace_save_cmdline(struct task_struct *tsk)
 	if (!tsk->pid || unlikely(tsk->pid > PID_MAX_DEFAULT))
 		return;
 
+	/*
+	 * It's not the end of the world if we don't get
+	 * the lock, but we also don't want to spin
+	 * nor do we want to disable interrupts,
+	 * so if we miss here, then better luck next time.
+	 */
 	if (!arch_spin_trylock(&trace_cmdline_lock))
 		return;
 
@@ -1135,6 +1421,12 @@ static void trace_save_cmdline(struct task_struct *tsk)
 	if (idx == NO_CMDLINE_MAP) {
 		idx = (cmdline_idx + 1) % SAVED_CMDLINES;
 
+		/*
+		 * Check whether the cmdline buffer at idx has a pid
+		 * mapped. We are going to overwrite that entry so we
+		 * need to clear the map_pid_to_cmdline. Otherwise we
+		 * would read the new comm for the old pid.
+		 */
 		pid = map_cmdline_to_pid[idx];
 		if (pid != NO_CMDLINE_MAP)
 			map_pid_to_cmdline[pid] = NO_CMDLINE_MAP;
@@ -1357,7 +1649,7 @@ trace_function(struct trace_array *tr,
 	struct ring_buffer_event *event;
 	struct ftrace_entry *entry;
 
-	
+	/* If we are reading the ring buffer, don't trace */
 	if (unlikely(__this_cpu_read(ftrace_cpu_disabled)))
 		return;
 
@@ -1406,9 +1698,22 @@ static void __ftrace_trace_stack(struct ring_buffer *buffer,
 	trace.nr_entries	= 0;
 	trace.skip		= skip;
 
+	/*
+	 * Since events can happen in NMIs there's no safe way to
+	 * use the per cpu ftrace_stacks. We reserve it and if an interrupt
+	 * or NMI comes in, it will just have to use the default
+	 * FTRACE_STACK_SIZE.
+	 */
 	preempt_disable_notrace();
 
 	use_stack = __this_cpu_inc_return(ftrace_stack_reserve);
+	/*
+	 * We don't need any atomic variables, just a barrier.
+	 * If an interrupt comes in, we don't care, because it would
+	 * have exited and put the counter back to what we want.
+	 * We just need a barrier to keep gcc from moving things
+	 * around.
+	 */
 	barrier();
 	if (use_stack == 1) {
 		trace.entries		= &__get_cpu_var(ftrace_stack).calls[0];
@@ -1422,7 +1727,7 @@ static void __ftrace_trace_stack(struct ring_buffer *buffer,
 		if (trace.nr_entries > size)
 			size = trace.nr_entries;
 	} else
-		
+		/* From now on, use_stack is a boolean */
 		use_stack = 0;
 
 	size *= sizeof(unsigned long);
@@ -1453,7 +1758,7 @@ static void __ftrace_trace_stack(struct ring_buffer *buffer,
 		__buffer_unlock_commit(buffer, event);
 
  out:
-	
+	/* Again, don't let gcc optimize things here */
 	barrier();
 	__this_cpu_dec(ftrace_stack_reserve);
 	preempt_enable_notrace();
@@ -1484,6 +1789,10 @@ void __trace_stack(struct trace_array *tr, unsigned long flags, int skip,
 	__ftrace_trace_stack(tr->trace_buffer.buffer, flags, skip, pc, NULL);
 }
 
+/**
+ * trace_dump_stack - record a stack back trace in the trace buffer
+ * @skip: Number of functions to skip (helper handlers)
+ */
 void trace_dump_stack(int skip)
 {
 	unsigned long flags;
@@ -1493,6 +1802,10 @@ void trace_dump_stack(int skip)
 
 	local_save_flags(flags);
 
+	/*
+	 * Skip 3 more, seems to get us at the caller of
+	 * this function.
+	 */
 	skip += 3;
 	__ftrace_trace_stack(global_trace.trace_buffer.buffer,
 			     flags, skip, preempt_count(), NULL);
@@ -1511,9 +1824,17 @@ ftrace_trace_userstack(struct ring_buffer *buffer, unsigned long flags, int pc)
 	if (!(trace_flags & TRACE_ITER_USERSTACKTRACE))
 		return;
 
+	/*
+	 * NMIs can not handle page faults, even with fix ups.
+	 * The save user stack can (and often does) fault.
+	 */
 	if (unlikely(in_nmi()))
 		return;
 
+	/*
+	 * prevent recursion, since the user stack tracing may
+	 * trigger other kernel events.
+	 */
 	preempt_disable();
 	if (__this_cpu_read(user_stack_count))
 		goto out;
@@ -1549,10 +1870,11 @@ static void __trace_userstack(struct trace_array *tr, unsigned long flags)
 {
 	ftrace_trace_userstack(tr, flags, preempt_count());
 }
-#endif 
+#endif /* UNUSED */
 
-#endif 
+#endif /* CONFIG_STACKTRACE */
 
+/* created for use with alloc_percpu */
 struct trace_buffer_struct {
 	char buffer[TRACE_BUF_SIZE];
 };
@@ -1562,10 +1884,21 @@ static struct trace_buffer_struct *trace_percpu_sirq_buffer;
 static struct trace_buffer_struct *trace_percpu_irq_buffer;
 static struct trace_buffer_struct *trace_percpu_nmi_buffer;
 
+/*
+ * The buffer used is dependent on the context. There is a per cpu
+ * buffer for normal context, softirq contex, hard irq context and
+ * for NMI context. Thise allows for lockless recording.
+ *
+ * Note, if the buffers failed to be allocated, then this returns NULL
+ */
 static char *get_trace_buf(void)
 {
 	struct trace_buffer_struct *percpu_buffer;
 
+	/*
+	 * If we have allocated per cpu buffers, then we do not
+	 * need to do any locking.
+	 */
 	if (in_nmi())
 		percpu_buffer = trace_percpu_nmi_buffer;
 	else if (in_irq())
@@ -1634,18 +1967,24 @@ void trace_printk_init_buffers(void)
 
 	pr_info("ftrace: Allocated trace_printk buffers\n");
 
-	
+	/* Expand the buffers to set size */
 	tracing_update_buffers();
 
 	buffers_allocated = 1;
 
+	/*
+	 * trace_printk_init_buffers() can be called by modules.
+	 * If that happens, then we need to start cmdline recording
+	 * directly here. If the global_trace.buffer is already
+	 * allocated here, then this was called by module code.
+	 */
 	if (global_trace.trace_buffer.buffer)
 		tracing_start_cmdline_record();
 }
 
 void trace_printk_start_comm(void)
 {
-	
+	/* Start tracing comms if trace printk is set */
 	if (!buffers_allocated)
 		return;
 	tracing_start_cmdline_record();
@@ -1662,6 +2001,10 @@ static void trace_printk_start_stop_comm(int enabled)
 		tracing_stop_cmdline_record();
 }
 
+/**
+ * trace_vbprintk - write binary msg to tracing buffer
+ *
+ */
 int trace_vbprintk(unsigned long ip, const char *fmt, va_list args)
 {
 	struct ftrace_event_call *call = &event_bprint;
@@ -1676,7 +2019,7 @@ int trace_vbprintk(unsigned long ip, const char *fmt, va_list args)
 	if (unlikely(tracing_selftest_running || tracing_disabled))
 		return 0;
 
-	
+	/* Don't pollute graph traces with trace_vprintk internals */
 	pause_graph_tracing();
 
 	pc = preempt_count();
@@ -1732,7 +2075,7 @@ __trace_array_vprintk(struct ring_buffer *buffer,
 	if (tracing_disabled || tracing_selftest_running)
 		return 0;
 
-	
+	/* Don't pollute graph traces with trace_vprintk internals */
 	pause_graph_tracing();
 
 	pc = preempt_count();
@@ -1857,6 +2200,10 @@ __find_next_entry(struct trace_iterator *iter, int *ent_cpu,
 	int next_size = 0;
 	int cpu;
 
+	/*
+	 * If we are in a per_cpu trace file, don't bother by iterating over
+	 * all cpu and peek directly.
+	 */
 	if (cpu_file > RING_BUFFER_ALL_CPUS) {
 		if (ring_buffer_empty_cpu(buffer, cpu_file))
 			return NULL;
@@ -1874,6 +2221,9 @@ __find_next_entry(struct trace_iterator *iter, int *ent_cpu,
 
 		ent = peek_next_entry(iter, cpu, &ts, &lost_events);
 
+		/*
+		 * Pick the entry with the smallest timestamp:
+		 */
 		if (ent && (!next || ts < next_ts)) {
 			next = ent;
 			next_cpu = cpu;
@@ -1897,12 +2247,14 @@ __find_next_entry(struct trace_iterator *iter, int *ent_cpu,
 	return next;
 }
 
+/* Find the next real entry, without updating the iterator itself */
 struct trace_entry *trace_find_next_entry(struct trace_iterator *iter,
 					  int *ent_cpu, u64 *ent_ts)
 {
 	return __find_next_entry(iter, ent_cpu, NULL, ent_ts);
 }
 
+/* Find the next real entry, and increment the iterator to the next entry */
 void *trace_find_next_entry_inc(struct trace_iterator *iter)
 {
 	iter->ent = __find_next_entry(iter, &iter->cpu,
@@ -1930,7 +2282,7 @@ static void *s_next(struct seq_file *m, void *v, loff_t *pos)
 
 	(*pos)++;
 
-	
+	/* can't go backwards */
 	if (iter->idx > i)
 		return NULL;
 
@@ -1962,6 +2314,11 @@ void tracing_iter_reset(struct trace_iterator *iter, int cpu)
 
 	ring_buffer_iter_reset(buf_iter);
 
+	/*
+	 * We could have the case with the max latency tracers
+	 * that a reset never took place on a cpu. This is evident
+	 * by the timestamp being before the start of the buffer.
+	 */
 	while ((event = ring_buffer_iter_peek(buf_iter, &ts))) {
 		if (ts >= iter->trace_buffer->time_start)
 			break;
@@ -1972,6 +2329,10 @@ void tracing_iter_reset(struct trace_iterator *iter, int cpu)
 	per_cpu_ptr(iter->trace_buffer->data, cpu)->skipped_entries = entries;
 }
 
+/*
+ * The current tracer is copied to avoid a global locking
+ * all around.
+ */
 static void *s_start(struct seq_file *m, loff_t *pos)
 {
 	struct trace_iterator *iter = m->private;
@@ -1981,6 +2342,12 @@ static void *s_start(struct seq_file *m, loff_t *pos)
 	loff_t l = 0;
 	int cpu;
 
+	/*
+	 * copy the tracer to avoid using a global lock all around.
+	 * iter->trace is a copy of current_trace, the pointer to the
+	 * name may be used instead of a strcmp(), as iter->trace->name
+	 * will point to the same string as current_trace->name.
+	 */
 	mutex_lock(&trace_types_lock);
 	if (unlikely(tr->current_trace && iter->trace->name != tr->current_trace->name))
 		*iter->trace = *tr->current_trace;
@@ -2010,6 +2377,10 @@ static void *s_start(struct seq_file *m, loff_t *pos)
 			;
 
 	} else {
+		/*
+		 * If we overflowed the seq_file before, then we want
+		 * to just reuse the trace_seq buffer again.
+		 */
 		if (iter->leftover)
 			p = iter;
 		else {
@@ -2051,9 +2422,14 @@ get_total_entries(struct trace_buffer *buf,
 
 	for_each_tracing_cpu(cpu) {
 		count = ring_buffer_entries_cpu(buf->buffer, cpu);
+		/*
+		 * If this buffer has skipped entries, then we hold all
+		 * entries for the trace and we need to ignore the
+		 * ones before the time stamp.
+		 */
 		if (per_cpu_ptr(buf->data, cpu)->skipped_entries) {
 			count -= per_cpu_ptr(buf->data, cpu)->skipped_entries;
-			
+			/* total is the same as the entries */
 			*total += count;
 		} else
 			*total += count +
@@ -2157,7 +2533,7 @@ print_trace_header(struct seq_file *m, struct trace_iterator *iter)
 #else
 		   "unknown",
 #endif
-		   
+		   /* These are reserved for later use */
 		   0, 0, 0, 0);
 #ifdef CONFIG_SMP
 	seq_printf(m, " #P:%d)\n", num_online_cpus());
@@ -2203,7 +2579,7 @@ static void test_cpu_buff_start(struct trace_iterator *iter)
 
 	cpumask_set_cpu(iter->cpu, iter->started);
 
-	
+	/* Don't print started cpu buffer for the first entry of the trace */
 	if (iter->idx > 1)
 		trace_seq_printf(s, "##### CPU %u buffer started ####\n",
 				iter->cpu);
@@ -2320,7 +2696,7 @@ int trace_empty(struct trace_iterator *iter)
 	struct ring_buffer_iter *buf_iter;
 	int cpu;
 
-	
+	/* If we are looking at one CPU buffer, only check that one */
 	if (iter->cpu_file != RING_BUFFER_ALL_CPUS) {
 		cpu = iter->cpu_file;
 		buf_iter = trace_buffer_iter(iter, cpu);
@@ -2348,6 +2724,7 @@ int trace_empty(struct trace_iterator *iter)
 	return 1;
 }
 
+/*  Called with trace_event_read_lock() held. */
 enum print_line_t print_trace_line(struct trace_iterator *iter)
 {
 	enum print_line_t ret;
@@ -2394,7 +2771,7 @@ void trace_latency_header(struct seq_file *m)
 {
 	struct trace_iterator *iter = m->private;
 
-	
+	/* print nothing if the buffers are empty */
 	if (trace_empty(iter))
 		return;
 
@@ -2413,7 +2790,7 @@ void trace_default_header(struct seq_file *m)
 		return;
 
 	if (iter->iter_flags & TRACE_FILE_LAT_FMT) {
-		
+		/* print nothing if the buffers are empty */
 		if (trace_empty(iter))
 			return;
 		print_trace_header(m, iter);
@@ -2483,6 +2860,7 @@ static void print_snapshot_help(struct seq_file *m, struct trace_iterator *iter)
 		show_snapshot_percpu_help(m);
 }
 #else
+/* Should never be called */
 static inline void print_snapshot_help(struct seq_file *m, struct trace_iterator *iter) { }
 #endif
 
@@ -2505,23 +2883,38 @@ static int s_show(struct seq_file *m, void *v)
 			trace_default_header(m);
 
 	} else if (iter->leftover) {
+		/*
+		 * If we filled the seq_file buffer earlier, we
+		 * want to just show it now.
+		 */
 		ret = trace_print_seq(m, &iter->seq);
 
-		
+		/* ret should this time be zero, but you never know */
 		iter->leftover = ret;
 
 	} else {
 		print_trace_line(iter);
 		ret = trace_print_seq(m, &iter->seq);
+		/*
+		 * If we overflow the seq_file buffer, then it will
+		 * ask us for this data again at start up.
+		 * Use that instead.
+		 *  ret is 0 if seq_file write succeeded.
+		 *        -1 otherwise.
+		 */
 		iter->leftover = ret;
 	}
 
 	return 0;
 }
 
+/*
+ * Should be used after trace_array_get(), trace_types_lock
+ * ensures that i_cdev was already initialized.
+ */
 static inline int tracing_get_cpu(struct inode *inode)
 {
-	if (inode->i_cdev) 
+	if (inode->i_cdev) /* See trace_create_cpu_file() */
 		return (long)inode->i_cdev - 1;
 	return RING_BUFFER_ALL_CPUS;
 }
@@ -2552,6 +2945,10 @@ __tracing_open(struct inode *inode, struct file *file, bool snapshot)
 	if (!iter->buffer_iter)
 		goto release;
 
+	/*
+	 * We make a copy of the current tracer to avoid concurrent
+	 * changes on it while we are reading.
+	 */
 	mutex_lock(&trace_types_lock);
 	iter->trace = kzalloc(sizeof(*iter->trace), GFP_KERNEL);
 	if (!iter->trace)
@@ -2565,7 +2962,7 @@ __tracing_open(struct inode *inode, struct file *file, bool snapshot)
 	iter->tr = tr;
 
 #ifdef CONFIG_TRACER_MAX_TRACE
-	
+	/* Currently only the top directory has a snapshot */
 	if (tr->current_trace->print_max || snapshot)
 		iter->trace_buffer = &tr->max_buffer;
 	else
@@ -2576,19 +2973,19 @@ __tracing_open(struct inode *inode, struct file *file, bool snapshot)
 	iter->cpu_file = tracing_get_cpu(inode);
 	mutex_init(&iter->mutex);
 
-	
+	/* Notify the tracer early; before we stop tracing. */
 	if (iter->trace && iter->trace->open)
 		iter->trace->open(iter);
 
-	
+	/* Annotate start of buffers if we had overruns */
 	if (ring_buffer_overruns(iter->trace_buffer->buffer))
 		iter->iter_flags |= TRACE_FILE_ANNOTATE;
 
-	
+	/* Output in nanoseconds only if we are using a clock in nanoseconds. */
 	if (trace_clocks[tr->clock_id].in_ns)
 		iter->iter_flags |= TRACE_FILE_TIME_IN_NS;
 
-	
+	/* stop the trace while dumping if we are not opening "snapshot" */
 	if (!iter->snapshot)
 		tracing_stop_tr(tr);
 
@@ -2633,6 +3030,10 @@ int tracing_open_generic(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+/*
+ * Open and update trace_array ref count.
+ * Must have the current trace_array passed to it.
+ */
 int tracing_open_generic_tr(struct inode *inode, struct file *filp)
 {
 	struct trace_array *tr = inode->i_private;
@@ -2660,7 +3061,7 @@ static int tracing_release(struct inode *inode, struct file *file)
 		return 0;
 	}
 
-	
+	/* Writes do not use seq_file */
 	iter = m->private;
 	mutex_lock(&trace_types_lock);
 
@@ -2673,7 +3074,7 @@ static int tracing_release(struct inode *inode, struct file *file)
 		iter->trace->close(iter);
 
 	if (!iter->snapshot)
-		
+		/* reenable tracing if it was previously enabled */
 		tracing_start_tr(tr);
 
 	__trace_array_put(tr);
@@ -2715,7 +3116,7 @@ static int tracing_open(struct inode *inode, struct file *file)
 	if (trace_array_get(tr) < 0)
 		return -ENODEV;
 
-	
+	/* If this file was open for write, then erase contents */
 	if ((file->f_mode & FMODE_WRITE) && (file->f_flags & O_TRUNC)) {
 		int cpu = tracing_get_cpu(inode);
 
@@ -2830,10 +3231,21 @@ static const struct file_operations show_traces_fops = {
 	.llseek		= seq_lseek,
 };
 
+/*
+ * Only trace on a CPU if the bitmask is set:
+ */
 static cpumask_var_t tracing_cpumask;
 
+/*
+ * The tracer itself will not take this lock, but still we want
+ * to provide a consistent cpumask to user-space:
+ */
 static DEFINE_MUTEX(tracing_cpumask_update_lock);
 
+/*
+ * Temporary storage for the character representation of the
+ * CPU bitmask (and one more byte for the newline):
+ */
 static char mask_str[NR_CPUS + 1];
 
 static ssize_t
@@ -2878,6 +3290,10 @@ tracing_cpumask_write(struct file *filp, const char __user *ubuf,
 	local_irq_disable();
 	arch_spin_lock(&ftrace_max_lock);
 	for_each_tracing_cpu(cpu) {
+		/*
+		 * Increase/decrease the disabled counter if we are
+		 * about to flip a bit in the cpumask:
+		 */
 		if (cpumask_test_cpu(cpu, tracing_cpumask) &&
 				!cpumask_test_cpu(cpu, tracing_cpumask_new)) {
 			atomic_inc(&per_cpu_ptr(tr->trace_buffer.data, cpu)->disabled);
@@ -2958,6 +3374,7 @@ static int __set_tracer_option(struct tracer *trace,
 	return 0;
 }
 
+/* Try to assign a tracer specific option */
 static int set_tracer_option(struct tracer *trace, char *cmp, int neg)
 {
 	struct tracer_flags *tracer_flags = trace->flags;
@@ -2975,6 +3392,7 @@ static int set_tracer_option(struct tracer *trace, char *cmp, int neg)
 	return -EINVAL;
 }
 
+/* Some tracers require overwrite to stay enabled */
 int trace_keep_overwrite(struct tracer *tracer, u32 mask, int set)
 {
 	if (tracer->enabled && (mask & TRACE_ITER_OVERWRITE) && !set)
@@ -2985,11 +3403,11 @@ int trace_keep_overwrite(struct tracer *tracer, u32 mask, int set)
 
 int set_tracer_flag(struct trace_array *tr, unsigned int mask, int enabled)
 {
-	
+	/* do nothing if flag is already set */
 	if (!!(trace_flags & mask) == !!enabled)
 		return 0;
 
-	
+	/* Give the tracer a chance to approve the change */
 	if (tr->current_trace->flag_changed)
 		if (tr->current_trace->flag_changed(tr->current_trace, mask, !!enabled))
 			return -EINVAL;
@@ -3038,7 +3456,7 @@ static int trace_set_options(struct trace_array *tr, char *option)
 		}
 	}
 
-	
+	/* If no option could be set, test the specific tracer options */
 	if (!trace_options[i])
 		ret = set_tracer_option(tr->current_trace, cmp, neg);
 
@@ -3159,7 +3577,7 @@ static const char readme_msg[] =
 	"            accepts: func_full_name, *func_end, func_begin*, *func_middle*\n"
 	"            modules: Can select a group via module command :mod:\n"
 	"            Does not accept triggers\n"
-#endif 
+#endif /* CONFIG_DYNAMIC_FTRACE */
 #ifdef CONFIG_FUNCTION_TRACER
 	"  set_ftrace_pid\t- Write pid(s) to only function trace those pids (function)\n"
 #endif
@@ -3178,7 +3596,7 @@ static const char readme_msg[] =
 #ifdef CONFIG_DYNAMIC_FTRACE
 	"  stack_trace_filter\t- Like set_ftrace_filter but limits what stack_trace traces\n"
 #endif
-#endif 
+#endif /* CONFIG_STACKTRACE */
 ;
 
 static ssize_t
@@ -3320,6 +3738,7 @@ static void set_buffer_entries(struct trace_buffer *buf, unsigned long val)
 }
 
 #ifdef CONFIG_TRACER_MAX_TRACE
+/* resize @tr's buffer to the size of @size_tr's entries */
 static int resize_buffer_duplicate_size(struct trace_buffer *trace_buf,
 					struct trace_buffer *size_buf, int cpu_id)
 {
@@ -3344,16 +3763,21 @@ static int resize_buffer_duplicate_size(struct trace_buffer *trace_buf,
 
 	return ret;
 }
-#endif 
+#endif /* CONFIG_TRACER_MAX_TRACE */
 
 static int __tracing_resize_ring_buffer(struct trace_array *tr,
 					unsigned long size, int cpu)
 {
 	int ret;
 
+	/*
+	 * If kernel or user changes the size of the ring buffer
+	 * we use the size that was given, and we can forget about
+	 * expanding it later.
+	 */
 	ring_buffer_expanded = true;
 
-	
+	/* May be called before buffers are initialized */
 	if (!tr->trace_buffer.buffer)
 		return 0;
 
@@ -3371,6 +3795,20 @@ static int __tracing_resize_ring_buffer(struct trace_array *tr,
 		int r = resize_buffer_duplicate_size(&tr->trace_buffer,
 						     &tr->trace_buffer, cpu);
 		if (r < 0) {
+			/*
+			 * AARGH! We are left with different
+			 * size max buffer!!!!
+			 * The max buffer is our "snapshot" buffer.
+			 * When a tracer needs a snapshot (one of the
+			 * latency tracers), it swaps the max buffer
+			 * with the saved snap shot. We succeeded to
+			 * update the size of the main buffer, but failed to
+			 * update the size of the max buffer. But when we tried
+			 * to reset the main buffer to the original size, we
+			 * failed there too. This is very unlikely to
+			 * happen, but if it does, warn and kill all
+			 * tracing.
+			 */
 			WARN_ON(1);
 			tracing_disabled = 1;
 		}
@@ -3383,7 +3821,7 @@ static int __tracing_resize_ring_buffer(struct trace_array *tr,
 		per_cpu_ptr(tr->max_buffer.data, cpu)->entries = size;
 
  out:
-#endif 
+#endif /* CONFIG_TRACER_MAX_TRACE */
 
 	if (cpu == RING_BUFFER_ALL_CPUS)
 		set_buffer_entries(&tr->trace_buffer, size);
@@ -3401,7 +3839,7 @@ static ssize_t tracing_resize_ring_buffer(struct trace_array *tr,
 	mutex_lock(&trace_types_lock);
 
 	if (cpu_id != RING_BUFFER_ALL_CPUS) {
-		
+		/* make sure, this cpu is enabled in the mask */
 		if (!cpumask_test_cpu(cpu_id, tracing_buffer_mask)) {
 			ret = -EINVAL;
 			goto out;
@@ -3419,6 +3857,16 @@ out:
 }
 
 
+/**
+ * tracing_update_buffers - used by tracing facility to expand ring buffers
+ *
+ * To save on memory when the tracing is never used on a system with it
+ * configured in. The ring buffers are set to a minimum size. But once
+ * a user starts to use the tracing facility, then they need to grow
+ * to their default size.
+ *
+ * This function is to be called when a tracer is about to be used.
+ */
 int tracing_update_buffers(void)
 {
 	int ret = 0;
@@ -3478,13 +3926,20 @@ static int tracing_set_tracer(const char *buf)
 	if (tr->current_trace->reset)
 		tr->current_trace->reset(tr);
 
-	
+	/* Current trace needs to be nop_trace before synchronize_sched */
 	tr->current_trace = &nop_trace;
 
 #ifdef CONFIG_TRACER_MAX_TRACE
 	had_max_tr = tr->allocated_snapshot;
 
 	if (had_max_tr && !t->use_max_tr) {
+		/*
+		 * We need to make sure that the update_max_tr sees that
+		 * current_trace changed to nop_trace to keep it from
+		 * swapping the buffers after we resize it.
+		 * The update_max_tr is called from interrupts disabled
+		 * so a synchronized_sched() is sufficient.
+		 */
 		synchronize_sched();
 		free_snapshot(tr);
 	}
@@ -3535,7 +3990,7 @@ tracing_set_trace_write(struct file *filp, const char __user *ubuf,
 
 	buf[cnt] = 0;
 
-	
+	/* strip ending whitespace. */
 	for (i = cnt - 1; i > 0 && isspace(buf[i]); i--)
 		buf[i] = 0;
 
@@ -3594,7 +4049,7 @@ static int tracing_open_pipe(struct inode *inode, struct file *filp)
 
 	mutex_lock(&trace_types_lock);
 
-	
+	/* create a buffer to store the information to pass to userspace */
 	iter = kzalloc(sizeof(*iter), GFP_KERNEL);
 	if (!iter) {
 		ret = -ENOMEM;
@@ -3602,6 +4057,10 @@ static int tracing_open_pipe(struct inode *inode, struct file *filp)
 		goto out;
 	}
 
+	/*
+	 * We make a copy of the current tracer to avoid concurrent
+	 * changes on it while we are reading.
+	 */
 	iter->trace = kmalloc(sizeof(*iter->trace), GFP_KERNEL);
 	if (!iter->trace) {
 		ret = -ENOMEM;
@@ -3614,13 +4073,13 @@ static int tracing_open_pipe(struct inode *inode, struct file *filp)
 		goto fail;
 	}
 
-	
+	/* trace pipe does not show start of buffer */
 	cpumask_setall(iter->started);
 
 	if (trace_flags & TRACE_ITER_LATENCY_FMT)
 		iter->iter_flags |= TRACE_FILE_LAT_FMT;
 
-	
+	/* Output in nanoseconds only if we are using a clock in nanoseconds. */
 	if (trace_clocks[tr->clock_id].in_ns)
 		iter->iter_flags |= TRACE_FILE_TIME_IN_NS;
 
@@ -3671,11 +4130,14 @@ static int tracing_release_pipe(struct inode *inode, struct file *file)
 static unsigned int
 trace_poll(struct trace_iterator *iter, struct file *filp, poll_table *poll_table)
 {
-	
+	/* Iterators are static, they should be filled or empty */
 	if (trace_buffer_iter(iter, iter->cpu_file))
 		return POLLIN | POLLRDNORM;
 
 	if (trace_flags & TRACE_ITER_BLOCK)
+		/*
+		 * Always select as readable when in blocking mode
+		 */
 		return POLLIN | POLLRDNORM;
 	else
 		return ring_buffer_poll_wait(iter->trace_buffer->buffer, iter->cpu_file,
@@ -3690,13 +4152,26 @@ tracing_poll_pipe(struct file *filp, poll_table *poll_table)
 	return trace_poll(iter, filp, poll_table);
 }
 
+/*
+ * This is a make-shift waitqueue.
+ * A tracer might use this callback on some rare cases:
+ *
+ *  1) the current tracer might hold the runqueue lock when it wakes up
+ *     a reader, hence a deadlock (sched, function, and function graph tracers)
+ *  2) the function tracers, trace all functions, we don't want
+ *     the overhead of calling wake_up and friends
+ *     (and tracing them too)
+ *
+ *     Anyway, this is really very primitive wakeup.
+ */
 void poll_wait_pipe(struct trace_iterator *iter)
 {
 	set_current_state(TASK_INTERRUPTIBLE);
-	
+	/* sleep for 100 msecs, and try again. */
 	schedule_timeout(HZ / 10);
 }
 
+/* Must be called with trace_types_lock mutex held. */
 static int tracing_wait_pipe(struct file *filp)
 {
 	struct trace_iterator *iter = filp->private_data;
@@ -3716,6 +4191,15 @@ static int tracing_wait_pipe(struct file *filp)
 		if (signal_pending(current))
 			return -EINTR;
 
+		/*
+		 * We block until we read something and tracing is disabled.
+		 * We still block if tracing is disabled, but we have never
+		 * read anything. This allows a user to cat this file, and
+		 * then enable tracing. But after we have read something,
+		 * we give an EOF when tracing is again disabled.
+		 *
+		 * iter->pos will be 0 if we haven't read anything.
+		 */
 		if (!tracing_is_on() && iter->pos)
 			break;
 	}
@@ -3723,6 +4207,9 @@ static int tracing_wait_pipe(struct file *filp)
 	return 1;
 }
 
+/*
+ * Consumer reader.
+ */
 static ssize_t
 tracing_read_pipe(struct file *filp, char __user *ubuf,
 		  size_t cnt, loff_t *ppos)
@@ -3731,19 +4218,24 @@ tracing_read_pipe(struct file *filp, char __user *ubuf,
 	struct trace_array *tr = iter->tr;
 	ssize_t sret;
 
-	
+	/* return any leftover data */
 	sret = trace_seq_to_user(&iter->seq, ubuf, cnt);
 	if (sret != -EBUSY)
 		return sret;
 
 	trace_seq_init(&iter->seq);
 
-	
+	/* copy the tracer to avoid using a global lock all around */
 	mutex_lock(&trace_types_lock);
 	if (unlikely(iter->trace->name != tr->current_trace->name))
 		*iter->trace = *tr->current_trace;
 	mutex_unlock(&trace_types_lock);
 
+	/*
+	 * Avoid more than one consumer on a single file descriptor
+	 * This is just a matter of traces coherency, the ring buffer itself
+	 * is protected.
+	 */
 	mutex_lock(&iter->mutex);
 	if (iter->trace->read) {
 		sret = iter->trace->read(iter, filp, ubuf, cnt, ppos);
@@ -3756,7 +4248,7 @@ waitagain:
 	if (sret <= 0)
 		goto out;
 
-	
+	/* stop when tracing is finished */
 	if (trace_empty(iter)) {
 		sret = 0;
 		goto out;
@@ -3765,7 +4257,7 @@ waitagain:
 	if (cnt >= PAGE_SIZE)
 		cnt = PAGE_SIZE - 1;
 
-	
+	/* reset all but tr, trace, and overruns */
 	memset(&iter->seq, 0,
 	       sizeof(struct trace_iterator) -
 	       offsetof(struct trace_iterator, seq));
@@ -3780,7 +4272,7 @@ waitagain:
 
 		ret = print_trace_line(iter);
 		if (ret == TRACE_TYPE_PARTIAL_LINE) {
-			
+			/* don't print partial lines */
 			iter->seq.len = len;
 			break;
 		}
@@ -3790,17 +4282,26 @@ waitagain:
 		if (iter->seq.len >= cnt)
 			break;
 
+		/*
+		 * Setting the full flag means we reached the trace_seq buffer
+		 * size and we should leave by partial output condition above.
+		 * One of the trace_seq_* functions is not used properly.
+		 */
 		WARN_ONCE(iter->seq.full, "full flag set for trace type %d",
 			  iter->ent->type);
 	}
 	trace_access_unlock(iter->cpu_file);
 	trace_event_read_unlock();
 
-	
+	/* Now copy what we have to the user */
 	sret = trace_seq_to_user(&iter->seq, ubuf, cnt);
 	if (iter->seq.readpos >= iter->seq.len)
 		trace_seq_init(&iter->seq);
 
+	/*
+	 * If there was nothing to send to user, in spite of consuming trace
+	 * entries, go back to wait for more entries.
+	 */
 	if (sret == -EBUSY)
 		goto waitagain;
 
@@ -3838,7 +4339,7 @@ tracing_fill_pipe_page(size_t rem, struct trace_iterator *iter)
 	size_t count;
 	int ret;
 
-	
+	/* Seq buffer is page-sized, exactly what we need. */
 	for (;;) {
 		count = iter->seq.len;
 		ret = print_trace_line(iter);
@@ -3878,7 +4379,7 @@ static ssize_t tracing_splice_read_pipe(struct file *filp,
 	struct splice_pipe_desc spd = {
 		.pages		= pages_def,
 		.partial	= partial_def,
-		.nr_pages	= 0, 
+		.nr_pages	= 0, /* This gets updated below. */
 		.nr_pages_max	= PIPE_DEF_BUFFERS,
 		.flags		= flags,
 		.ops		= &tracing_pipe_buf_ops,
@@ -3892,7 +4393,7 @@ static ssize_t tracing_splice_read_pipe(struct file *filp,
 	if (splice_grow_spd(pipe, &spd))
 		return -ENOMEM;
 
-	
+	/* copy the tracer to avoid using a global lock all around */
 	mutex_lock(&trace_types_lock);
 	if (unlikely(iter->trace->name != tr->current_trace->name))
 		*iter->trace = *tr->current_trace;
@@ -3919,7 +4420,7 @@ static ssize_t tracing_splice_read_pipe(struct file *filp,
 	trace_event_read_lock();
 	trace_access_lock(iter->cpu_file);
 
-	
+	/* Fill as many pages as possible. */
 	for (i = 0, rem = len; i < pipe->buffers && rem; i++) {
 		spd.pages[i] = alloc_page(GFP_KERNEL);
 		if (!spd.pages[i])
@@ -3927,7 +4428,7 @@ static ssize_t tracing_splice_read_pipe(struct file *filp,
 
 		rem = tracing_fill_pipe_page(rem, iter);
 
-		
+		/* Copy the data into the page, so we can start over. */
 		ret = trace_seq_to_buffer(&iter->seq,
 					  page_address(spd.pages[i]),
 					  iter->seq.len);
@@ -3976,9 +4477,9 @@ tracing_entries_read(struct file *filp, char __user *ubuf,
 
 		size = 0;
 		buf_size_same = 1;
-		
+		/* check if all cpu sizes are same */
 		for_each_tracing_cpu(cpu) {
-			
+			/* fill in the size from first enabled cpu */
 			if (size == 0)
 				size = per_cpu_ptr(tr->trace_buffer.data, cpu)->entries;
 			if (size != per_cpu_ptr(tr->trace_buffer.data, cpu)->entries) {
@@ -4018,11 +4519,11 @@ tracing_entries_write(struct file *filp, const char __user *ubuf,
 	if (ret)
 		return ret;
 
-	
+	/* must have at least 1 entry */
 	if (!val)
 		return -EINVAL;
 
-	
+	/* value is in KB */
 	val <<= 10;
 	ret = tracing_resize_ring_buffer(tr, val, tracing_get_cpu(inode));
 	if (ret < 0)
@@ -4076,10 +4577,10 @@ tracing_free_buffer_release(struct inode *inode, struct file *filp)
 {
 	struct trace_array *tr = inode->i_private;
 
-	
+	/* disable tracing ? */
 	if (trace_flags & TRACE_ITER_STOP_ON_FREE)
 		tracer_tracing_off(tr);
-	
+	/* resize the ring buffer to 0 */
 	tracing_resize_ring_buffer(tr, 0, RING_BUFFER_ALL_CPUS);
 
 	trace_array_put(tr);
@@ -4116,9 +4617,23 @@ tracing_mark_write(struct file *filp, const char __user *ubuf,
 	if (cnt > TRACE_BUF_SIZE)
 		cnt = TRACE_BUF_SIZE;
 
+	/*
+	 * Userspace is injecting traces into the kernel trace buffer.
+	 * We want to be as non intrusive as possible.
+	 * To do so, we do not want to allocate any special buffers
+	 * or take any locks, but instead write the userspace data
+	 * straight into the ring buffer.
+	 *
+	 * First we need to pin the userspace buffer into memory,
+	 * which, most likely it is, because it just referenced it.
+	 * But there's no guarantee that it is. By using get_user_pages_fast()
+	 * and kmap_atomic/kunmap_atomic() we can get access to the
+	 * pages directly. We then write the data directly into the
+	 * ring buffer.
+	 */
 	BUILD_BUG_ON(TRACE_BUF_SIZE >= PAGE_SIZE);
 
-	
+	/* check if we cross pages */
 	if ((addr & PAGE_MASK) != ((addr + cnt) & PAGE_MASK))
 		nr_pages = 2;
 
@@ -4137,12 +4652,12 @@ tracing_mark_write(struct file *filp, const char __user *ubuf,
 		map_page[i] = kmap_atomic(pages[i]);
 
 	local_save_flags(irq_flags);
-	size = sizeof(*entry) + cnt + 2; 
+	size = sizeof(*entry) + cnt + 2; /* possible \n added */
 	buffer = tr->trace_buffer.buffer;
 	event = trace_buffer_lock_reserve(buffer, TRACE_PRINT, size,
 					  irq_flags, preempt_count());
 	if (!event) {
-		
+		/* Ring buffer disabled, return as if not open for write */
 		written = -EBADF;
 		goto out_unlock;
 	}
@@ -4228,6 +4743,10 @@ static ssize_t tracing_clock_write(struct file *filp, const char __user *ubuf,
 
 	ring_buffer_set_clock(tr->trace_buffer.buffer, trace_clocks[i].func);
 
+	/*
+	 * New clock may not be consistent with the previous clock.
+	 * Reset the buffer so that it doesn't have incomparable timestamps.
+	 */
 	tracing_reset_online_cpus(&tr->trace_buffer);
 
 #ifdef CONFIG_TRACER_MAX_TRACE
@@ -4283,7 +4802,7 @@ static int tracing_snapshot_open(struct inode *inode, struct file *file)
 		if (IS_ERR(iter))
 			ret = PTR_ERR(iter);
 	} else {
-		
+		/* Writes still need the seq_file to hold the private data */
 		ret = -ENOMEM;
 		m = kzalloc(sizeof(*m), GFP_KERNEL);
 		if (!m)
@@ -4343,6 +4862,7 @@ tracing_snapshot_write(struct file *filp, const char __user *ubuf, size_t cnt,
 			free_snapshot(tr);
 		break;
 	case 1:
+/* Only allow per-cpu swap if the ring buffer supports it */
 #ifndef CONFIG_RING_BUFFER_ALLOW_SWAP
 		if (iter->cpu_file != RING_BUFFER_ALL_CPUS) {
 			ret = -EINVAL;
@@ -4355,7 +4875,7 @@ tracing_snapshot_write(struct file *filp, const char __user *ubuf, size_t cnt,
 				break;
 		}
 		local_irq_disable();
-		
+		/* Now, we're going to swap */
 		if (iter->cpu_file == RING_BUFFER_ALL_CPUS)
 			update_max_tr(tr, current, smp_processor_id());
 		else
@@ -4391,7 +4911,7 @@ static int tracing_snapshot_release(struct inode *inode, struct file *file)
 	if (file->f_mode & FMODE_READ)
 		return ret;
 
-	
+	/* If write only, the seq_file is just a stub */
 	if (m)
 		kfree(m->private);
 	kfree(m);
@@ -4428,7 +4948,7 @@ static int snapshot_raw_open(struct inode *inode, struct file *filp)
 	return ret;
 }
 
-#endif 
+#endif /* CONFIG_TRACER_SNAPSHOT */
 
 
 static const struct file_operations tracing_max_lat_fops = {
@@ -4507,7 +5027,7 @@ static const struct file_operations snapshot_raw_fops = {
 	.llseek		= no_llseek,
 };
 
-#endif 
+#endif /* CONFIG_TRACER_SNAPSHOT */
 
 static int tracing_buffers_open(struct inode *inode, struct file *filp)
 {
@@ -4534,7 +5054,7 @@ static int tracing_buffers_open(struct inode *inode, struct file *filp)
 	info->iter.trace	= tr->current_trace;
 	info->iter.trace_buffer = &tr->trace_buffer;
 	info->spare		= NULL;
-	
+	/* Force reading ring buffer for first read */
 	info->read		= (unsigned int)-1;
 
 	filp->private_data = info;
@@ -4585,7 +5105,7 @@ tracing_buffers_read(struct file *filp, char __user *ubuf,
 	if (!info->spare)
 		goto out_unlock;
 
-	
+	/* Do we have previous read data to read? */
 	if (info->read < PAGE_SIZE)
 		goto read;
 
@@ -4683,6 +5203,7 @@ static void buffer_pipe_buf_get(struct pipe_inode_info *pipe,
 	ref->ref++;
 }
 
+/* Pipe buffer operations for a buffer. */
 static const struct pipe_buf_operations buffer_pipe_buf_ops = {
 	.can_merge		= 0,
 	.map			= generic_pipe_buf_map,
@@ -4693,6 +5214,10 @@ static const struct pipe_buf_operations buffer_pipe_buf_ops = {
 	.get			= buffer_pipe_buf_get,
 };
 
+/*
+ * Callback from splice_to_pipe(), if we need to release some pages
+ * at the end of the spd in case we error'ed out in filling the pipe.
+ */
 static void buffer_spd_release(struct splice_pipe_desc *spd, unsigned int i)
 {
 	struct buffer_ref *ref =
@@ -4782,6 +5307,10 @@ tracing_buffers_splice_read(struct file *file, loff_t *ppos,
 			break;
 		}
 
+		/*
+		 * zero out any left over data, this is going to
+		 * user land.
+		 */
 		size = ring_buffer_page_len(ref->page);
 		if (size < PAGE_SIZE)
 			memset(ref->page + size, 0, PAGE_SIZE - size);
@@ -4801,7 +5330,7 @@ tracing_buffers_splice_read(struct file *file, loff_t *ppos,
 	trace_access_unlock(iter->cpu_file);
 	spd.nr_pages = i;
 
-	
+	/* did we read anything? */
 	if (!spd.nr_pages) {
 		if ((file->f_flags & O_NONBLOCK) || (flags & SPLICE_F_NONBLOCK)) {
 			ret = -EAGAIN;
@@ -4866,7 +5395,7 @@ tracing_stats_read(struct file *filp, char __user *ubuf,
 	trace_seq_printf(s, "bytes: %ld\n", cnt);
 
 	if (trace_clocks[tr->clock_id].in_ns) {
-		
+		/* local or global for trace_clock */
 		t = ns2usecs(ring_buffer_oldest_event_ts(trace_buf->buffer, cpu));
 		usec_rem = do_div(t, USEC_PER_SEC);
 		trace_seq_printf(s, "oldest event ts: %5llu.%06lu\n",
@@ -4876,7 +5405,7 @@ tracing_stats_read(struct file *filp, char __user *ubuf,
 		usec_rem = do_div(t, USEC_PER_SEC);
 		trace_seq_printf(s, "now ts: %5llu.%06lu\n", t, usec_rem);
 	} else {
-		
+		/* counter or tsc mode for trace_clock */
 		trace_seq_printf(s, "oldest event ts: %llu\n",
 				ring_buffer_oldest_event_ts(trace_buf->buffer, cpu));
 
@@ -4940,7 +5469,7 @@ static const struct file_operations tracing_dyn_info_fops = {
 	.read		= tracing_read_dyn_info,
 	.llseek		= generic_file_llseek,
 };
-#endif 
+#endif /* CONFIG_DYNAMIC_FTRACE */
 
 #if defined(CONFIG_TRACER_SNAPSHOT) && defined(CONFIG_DYNAMIC_FTRACE)
 static void
@@ -5000,7 +5529,7 @@ ftrace_trace_snapshot_callback(struct ftrace_hash *hash,
 	char *number;
 	int ret;
 
-	
+	/* hash funcs only work with set_ftrace_filter */
 	if (!enable)
 		return -EINVAL;
 
@@ -5019,6 +5548,10 @@ ftrace_trace_snapshot_callback(struct ftrace_hash *hash,
 	if (!strlen(number))
 		goto out_reg;
 
+	/*
+	 * We use the callback data field (which is a pointer)
+	 * as our counter.
+	 */
 	ret = kstrtoul(number, 0, (unsigned long *)&count);
 	if (ret)
 		return ret;
@@ -5043,7 +5576,7 @@ static int register_snapshot_cmd(void)
 }
 #else
 static inline int register_snapshot_cmd(void) { return 0; }
-#endif 
+#endif /* defined(CONFIG_TRACER_SNAPSHOT) && defined(CONFIG_DYNAMIC_FTRACE) */
 
 struct dentry *tracing_init_dentry_tr(struct trace_array *tr)
 {
@@ -5092,7 +5625,7 @@ trace_create_cpu_file(const char *name, umode_t mode, struct dentry *parent,
 {
 	struct dentry *ret = trace_create_file(name, mode, parent, data, fops);
 
-	if (ret) 
+	if (ret) /* See tracing_get_cpu() */
 		ret->d_inode->i_cdev = (void *)(cpu + 1);
 	return ret;
 }
@@ -5102,7 +5635,7 @@ tracing_init_debugfs_percpu(struct trace_array *tr, long cpu)
 {
 	struct dentry *d_percpu = tracing_dentry_percpu(tr, cpu);
 	struct dentry *d_cpu;
-	char cpu_dir[30]; 
+	char cpu_dir[30]; /* 30 characters should be more than enough */
 
 	if (!d_percpu)
 		return;
@@ -5114,11 +5647,11 @@ tracing_init_debugfs_percpu(struct trace_array *tr, long cpu)
 		return;
 	}
 
-	
+	/* per cpu trace_pipe */
 	trace_create_cpu_file("trace_pipe", 0444, d_cpu,
 				tr, cpu, &tracing_pipe_fops);
 
-	
+	/* per cpu trace */
 	trace_create_cpu_file("trace", 0644, d_cpu,
 				tr, cpu, &tracing_fops);
 
@@ -5141,6 +5674,7 @@ tracing_init_debugfs_percpu(struct trace_array *tr, long cpu)
 }
 
 #ifdef CONFIG_FTRACE_SELFTEST
+/* Let selftest have access to static functions in this file */
 #include "trace_selftest.c"
 #endif
 
@@ -5474,7 +6008,7 @@ allocate_trace_buffer(struct trace_array *tr, struct trace_buffer *buf, int size
 
 	init_trace_buffers(tr, buf);
 
-	
+	/* Allocate the first page for all buffers */
 	set_buffer_entries(&tr->trace_buffer,
 			   ring_buffer_size(tr->trace_buffer.buffer, 0));
 
@@ -5499,6 +6033,10 @@ static int allocate_trace_buffers(struct trace_array *tr, int size)
 	}
 	tr->allocated_snapshot = allocate_snapshot;
 
+	/*
+	 * Only the top level trace array gets its snapshot allocated
+	 * from the kernel command line.
+	 */
 	allocate_snapshot = false;
 #endif
 	return 0;
@@ -5536,7 +6074,7 @@ static int new_instance_create(const char *name)
 	if (allocate_trace_buffers(tr, trace_buf_size) < 0)
 		goto out_free_tr;
 
-	
+	/* Holder for file callbacks */
 	tr->trace_cpu.cpu = RING_BUFFER_ALL_CPUS;
 	tr->trace_cpu.tr = tr;
 
@@ -5616,11 +6154,19 @@ static int instance_mkdir (struct inode *inode, struct dentry *dentry, umode_t m
 	struct dentry *parent;
 	int ret;
 
-	
+	/* Paranoid: Make sure the parent is the "instances" directory */
 	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_alias);
 	if (WARN_ON_ONCE(parent != trace_instance_dir))
 		return -ENOENT;
 
+	/*
+	 * The inode mutex is locked, but debugfs_create_dir() will also
+	 * take the mutex. As the instances directory can not be destroyed
+	 * or changed in any other way, it is safe to unlock it, and
+	 * let the dentry try. If two users try to make the same dir at
+	 * the same time, then the new_instance_create() will determine the
+	 * winner.
+	 */
 	mutex_unlock(&inode->i_mutex);
 
 	ret = new_instance_create(dentry->d_iname);
@@ -5635,14 +6181,22 @@ static int instance_rmdir(struct inode *inode, struct dentry *dentry)
 	struct dentry *parent;
 	int ret;
 
-	
+	/* Paranoid: Make sure the parent is the "instances" directory */
 	parent = hlist_entry(inode->i_dentry.first, struct dentry, d_alias);
 	if (WARN_ON_ONCE(parent != trace_instance_dir))
 		return -ENOENT;
 
-	
+	/* The caller did a dget() on dentry */
 	mutex_unlock(&dentry->d_inode->i_mutex);
 
+	/*
+	 * The inode mutex is locked, but debugfs_create_dir() will also
+	 * take the mutex. As the instances directory can not be destroyed
+	 * or changed in any other way, it is safe to unlock it, and
+	 * let the dentry try. If two users try to make the same dir at
+	 * the same time, then the instance_delete() will determine the
+	 * winner.
+	 */
 	mutex_unlock(&inode->i_mutex);
 
 	ret = instance_delete(dentry->d_iname);
@@ -5665,7 +6219,7 @@ static __init void create_trace_instances(struct dentry *d_tracer)
 	if (WARN_ON(!trace_instance_dir))
 		return;
 
-	
+	/* Hijack the dir inode operations, to allow mkdir */
 	trace_instance_dir->d_inode->i_op = &instance_dir_inode_operations;
 }
 
@@ -5772,7 +6326,7 @@ static int trace_panic_handler(struct notifier_block *this,
 static struct notifier_block trace_panic_notifier = {
 	.notifier_call  = trace_panic_handler,
 	.next           = NULL,
-	.priority       = 150   
+	.priority       = 150   /* priority: INT_MAX >= x >= 0 */
 };
 
 static int trace_die_handler(struct notifier_block *self,
@@ -5795,18 +6349,27 @@ static struct notifier_block trace_die_notifier = {
 	.priority = 200
 };
 
+/*
+ * printk is set to max of 1024, we really don't need it that big.
+ * Nothing should be printing 1000 characters anyway.
+ */
 #define TRACE_MAX_PRINT		1000
 
+/*
+ * Define here KERN_TRACE so that we have one place to modify
+ * it if we decide to change what log level the ftrace dump
+ * should be at.
+ */
 #define KERN_TRACE		KERN_EMERG
 
 void
 trace_printk_seq(struct trace_seq *s)
 {
-	
+	/* Probably should print a warning here. */
 	if (s->len >= TRACE_MAX_PRINT)
 		s->len = TRACE_MAX_PRINT;
 
-	
+	/* should be zero ended, but we are paranoid. */
 	s->buffer[s->len] = 0;
 
 	printk(KERN_TRACE "%s", s->buffer);
@@ -5824,24 +6387,32 @@ void trace_init_global_iter(struct trace_iterator *iter)
 
 void ftrace_dump(enum ftrace_dump_mode oops_dump_mode)
 {
-	
+	/* use static because iter can be a bit big for the stack */
 	static struct trace_iterator iter;
 	static atomic_t dump_running;
 	unsigned int old_userobj;
 	unsigned long flags;
 	int cnt = 0, cpu;
 
-	
+	/* Only allow one dump user at a time. */
 	if (atomic_inc_return(&dump_running) != 1) {
 		atomic_dec(&dump_running);
 		return;
 	}
 
+	/*
+	 * Always turn off tracing when we dump.
+	 * We don't need to show trace output of what happens
+	 * between multiple crashes.
+	 *
+	 * If the user does a sysrq-z, then they can re-enable
+	 * tracing with echo 1 > tracing_on.
+	 */
 	tracing_off();
 
 	local_irq_save(flags);
 
-	
+	/* Simulate the iterator */
 	trace_init_global_iter(&iter);
 
 	for_each_tracing_cpu(cpu) {
@@ -5850,7 +6421,7 @@ void ftrace_dump(enum ftrace_dump_mode oops_dump_mode)
 
 	old_userobj = trace_flags & TRACE_ITER_SYM_USEROBJ;
 
-	
+	/* don't look at user memory in panic mode */
 	trace_flags &= ~TRACE_ITER_SYM_USEROBJ;
 
 	switch (oops_dump_mode) {
@@ -5869,12 +6440,18 @@ void ftrace_dump(enum ftrace_dump_mode oops_dump_mode)
 
 	printk(KERN_TRACE "Dumping ftrace buffer:\n");
 
-	
+	/* Did function tracer already get disabled? */
 	if (ftrace_is_dead()) {
 		printk("# WARNING: FUNCTION TRACING IS CORRUPTED\n");
 		printk("#          MAY BE MISSING FUNCTION EVENTS\n");
 	}
 
+	/*
+	 * We need to stop all tracing on all CPUS to read the
+	 * the next buffer. This is a bit expensive, but is
+	 * not done often. We fill all what we can read,
+	 * and then release the locks again.
+	 */
 
 	while (!trace_empty(&iter)) {
 
@@ -5883,7 +6460,7 @@ void ftrace_dump(enum ftrace_dump_mode oops_dump_mode)
 
 		cnt++;
 
-		
+		/* reset all but tr, trace, and overruns */
 		memset(&iter.seq, 0,
 		       sizeof(struct trace_iterator) -
 		       offsetof(struct trace_iterator, seq));
@@ -5930,12 +6507,12 @@ __init static int tracer_alloc_buffers(void)
 	if (!alloc_cpumask_var(&tracing_cpumask, GFP_KERNEL))
 		goto out_free_buffer_mask;
 
-	
+	/* Only allocate trace_printk buffers if a trace_printk exists */
 	if (__stop___trace_bprintk_fmt != __start___trace_bprintk_fmt)
-		
+		/* Must be called before global_trace.buffer is allocated */
 		trace_printk_init_buffers();
 
-	
+	/* To save memory, keep the ring buffer size to its minimum */
 	if (ring_buffer_expanded)
 		ring_buf_size = trace_buf_size;
 	else
@@ -5946,7 +6523,7 @@ __init static int tracer_alloc_buffers(void)
 
 	raw_spin_lock_init(&global_trace.start_lock);
 
-	
+	/* TODO: make the number of buffers hot pluggable with CPUS */
 	if (allocate_trace_buffers(&global_trace, ring_buf_size) < 0) {
 		printk(KERN_ERR "tracer: failed to allocate ring buffer!\n");
 		WARN_ON(1);
@@ -5958,11 +6535,16 @@ __init static int tracer_alloc_buffers(void)
 
 	trace_init_cmdlines();
 
+	/*
+	 * register_tracer() might reference current_trace, so it
+	 * needs to be set before we register anything. This is
+	 * just a bootstrap of current_trace anyway.
+	 */
 	global_trace.current_trace = &nop_trace;
 
 	register_tracer(&nop_trace);
 
-	
+	/* All seems OK, enable tracing */
 	tracing_disabled = 0;
 
 	atomic_notifier_chain_register(&panic_notifier_list,
@@ -5972,7 +6554,7 @@ __init static int tracer_alloc_buffers(void)
 
 	global_trace.flags = TRACE_ARRAY_FL_GLOBAL;
 
-	
+	/* Holder for file callbacks */
 	global_trace.trace_cpu.cpu = RING_BUFFER_ALL_CPUS;
 	global_trace.trace_cpu.tr = &global_trace;
 
@@ -6005,6 +6587,13 @@ out:
 
 __init static int clear_boot_tracer(void)
 {
+	/*
+	 * The default tracer at boot buffer is an init section.
+	 * This function is called in lateinit. If we did not
+	 * find the boot tracer, then clear it out, to prevent
+	 * later registration from accessing the buffer that is
+	 * about to be freed.
+	 */
 	if (!default_bootup_tracer)
 		return 0;
 

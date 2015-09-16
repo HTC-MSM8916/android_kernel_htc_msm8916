@@ -20,6 +20,7 @@
 
 #define FLASH_NAME "camera-led-flash"
 
+/*#define CONFIG_MSMB_CAMERA_DEBUG*/
 #undef CDBG
 #ifdef CONFIG_MSMB_CAMERA_DEBUG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
@@ -55,10 +56,10 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 {
 	int rc = 0;
 	struct msm_camera_led_cfg_t *cfg = (struct msm_camera_led_cfg_t *)data;
-	#ifndef CONFIG_FLASHLIGHT_TPS61310
+#ifndef CONFIG_FLASHLIGHT_TPS61310
 	uint32_t i;
-	uint32_t curr_l, max_curr_l; 
-	#endif
+	uint32_t curr_l, max_curr_l;
+#endif
 	CDBG("called led_state %d\n", cfg->cfgtype);
 
 	if (!fctrl) {
@@ -68,19 +69,19 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 
 	switch (cfg->cfgtype) {
 	case MSM_CAMERA_LED_OFF:
-        #ifndef CONFIG_FLASHLIGHT_TPS61310 
+#ifndef CONFIG_FLASHLIGHT_TPS61310 
 		for (i = 0; i < fctrl->num_sources; i++)
 			if (fctrl->flash_trigger[i])
 				led_trigger_event(fctrl->flash_trigger[i], 0);
 		if (fctrl->torch_trigger)
 			led_trigger_event(fctrl->torch_trigger, 0);
-        #else
-			tps61310_flashlight_control(FL_MODE_OFF);
-        #endif 
+#else
+		tps61310_flashlight_control(FL_MODE_OFF);
+#endif 
 		break;
 
 	case MSM_CAMERA_LED_LOW:
-		#ifndef CONFIG_FLASHLIGHT_TPS61310 
+#ifndef CONFIG_FLASHLIGHT_TPS61310 
 		if (fctrl->torch_trigger) {
 			max_curr_l = fctrl->torch_max_current;
 			if (cfg->torch_current > 0 &&
@@ -94,13 +95,13 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 			led_trigger_event(fctrl->torch_trigger,
 				curr_l);
 		}
-        #else
-        tps61310_flashlight_control(FL_MODE_PRE_FLASH);
-        #endif 
+#else
+		tps61310_flashlight_control(FL_MODE_PRE_FLASH);
+#endif 
 		break;
 
 	case MSM_CAMERA_LED_HIGH:
-        #ifndef CONFIG_FLASHLIGHT_TPS61310 
+#ifndef CONFIG_FLASHLIGHT_TPS61310 
 		if (fctrl->torch_trigger)
 			led_trigger_event(fctrl->torch_trigger, 0);
 		for (i = 0; i < fctrl->num_sources; i++)
@@ -117,34 +118,34 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 				led_trigger_event(fctrl->flash_trigger[i],
 					curr_l);
 			}
-        #else
-        pr_info("[CAM][FL] called linear flashlight current value %d", (int)cfg->ma_value);
-        if (cfg->ma_value == 0)
-          tps61310_flashlight_control(FL_MODE_FLASH_LEVEL7);
-        else{
-          int led1 = (int)cfg->ma_value & 0xFFFF;
-          int led2 = (cfg->ma_value & 0xFFFF0000)>>16;
-          pr_info("[CAM][FL] led1[%d]led2[%d]", led1, led2);
-          if(led1 == 1500 && led2 == 0){
-              tps61310_flashlight_mode(led1);
-          }else{
-              tps61310_flashlight_mode2(led1, led2);
-          }
-        }
-        #endif 
+#else
+		pr_info("[CAM][FL] called linear flashlight current value %d", (int)cfg->ma_value);
+		if (cfg->ma_value == 0)
+			tps61310_flashlight_control(FL_MODE_FLASH_LEVEL7);
+		else {
+			int led1 = (int)cfg->ma_value & 0xFFFF;
+			int led2 = (cfg->ma_value & 0xFFFF0000)>>16;
+			pr_info("[CAM][FL] led1[%d]led2[%d]", led1, led2);
+			if(led1 == 1500 && led2 == 0)
+				tps61310_flashlight_mode(led1);
+			else
+				tps61310_flashlight_mode2(led1, led2);
+
+		}
+#endif 
 		break;
 
 	case MSM_CAMERA_LED_INIT:
 	case MSM_CAMERA_LED_RELEASE:
-        #ifndef CONFIG_FLASHLIGHT_TPS61310 
+#ifndef CONFIG_FLASHLIGHT_TPS61310 
 		for (i = 0; i < fctrl->num_sources; i++)
 			if (fctrl->flash_trigger[i])
 				led_trigger_event(fctrl->flash_trigger[i], 0);
 		if (fctrl->torch_trigger)
 			led_trigger_event(fctrl->torch_trigger, 0);
-		#else
+#else
 		tps61310_flashlight_control(FL_MODE_OFF);
-		#endif 
+#endif 
 		break;
 
 	default:
@@ -231,7 +232,7 @@ static int32_t msm_led_trigger_probe(struct platform_device *pdev)
 				fctrl.flash_trigger_name[i]);
 
 			if (flashtype == GPIO_FLASH) {
-				
+				/* use fake current */
 				fctrl.flash_op_current[i] = LED_FULL;
 			} else {
 				rc = of_property_read_u32(flash_src_node,
@@ -260,7 +261,7 @@ static int32_t msm_led_trigger_probe(struct platform_device *pdev)
 					temp = fctrl.flash_trigger[i];
 		}
 
-		
+		/* Torch source */
 		flash_src_node = of_parse_phandle(of_node, "qcom,torch-source",
 			0);
 		if (flash_src_node) {
@@ -276,7 +277,7 @@ static int32_t msm_led_trigger_probe(struct platform_device *pdev)
 				fctrl.torch_trigger_name);
 
 			if (flashtype == GPIO_FLASH) {
-				
+				/* use fake current */
 				fctrl.torch_op_current = LED_HALF;
 				if (temp)
 					fctrl.torch_trigger = temp;
@@ -503,22 +504,21 @@ error:
 
 static int __init msm_led_trigger_add_driver(void)
 {
-    #if 0 
+#if 0 
 	CDBG("called\n");
 	return platform_driver_probe(&msm_led_trigger_driver,
 		msm_led_trigger_probe);
-    #else
-    int32_t rc = 0;
+#else
+	int32_t rc = 0;
 	pr_info("%s:%d\n", __func__, __LINE__);
 	rc = platform_driver_probe(&msm_led_trigger_driver,
 		msm_led_trigger_probe);
-	if (!rc) {
+	if (!rc)
 		rc = msm_led_trigger_sysfs_init();
-	}
+
 	pr_err("%s:%d rc %d\n", __func__, __LINE__, rc);
 	return rc;
-
-    #endif 
+#endif 
 }
 
 static struct msm_flash_fn_t msm_led_trigger_func_tbl = {

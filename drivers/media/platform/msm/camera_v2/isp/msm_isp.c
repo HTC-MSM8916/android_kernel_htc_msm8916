@@ -176,7 +176,7 @@ static struct v4l2_file_operations msm_isp_v4l2_subdev_fops = {
 static int vfe_probe(struct platform_device *pdev)
 {
 	struct vfe_device *vfe_dev;
-	
+	/*struct msm_cam_subdev_info sd_info;*/
 	const struct of_device_id *match_dev;
 	int rc = 0;
 
@@ -204,7 +204,6 @@ static int vfe_probe(struct platform_device *pdev)
 		pr_err("%s: no enough memory\n", __func__);
 		return -ENOMEM;
 	}
-
 	if (pdev->dev.of_node) {
 		of_property_read_u32((&pdev->dev)->of_node,
 			"cell-index", &pdev->id);

@@ -1013,7 +1013,7 @@ static void hfi_process_session_ftb_done(msm_vidc_callback callback,
 			dprintk(VIDC_ERR,
 				"got buffer back with error %x\n",
 				pkt->error_type);
-			
+			/* Proceed with the FBD */
 		}
 
 		data_done.device_id = device_id;
@@ -1287,6 +1287,11 @@ static void hfi_process_sys_get_prop_image_version(
 		return;
 	}
 	str_image_version = (u8 *)&pkt->rg_property_data[1];
+	/*
+	 * The version string returned by firmware includes null
+	 * characters at the start and in between. Replace the null
+	 * characters with space, to print the version info.
+	 */
 	for (i = 0; i < version_string_size; i++) {
 		if (str_image_version[i] != '\0')
 			version[i] = str_image_version[i];
@@ -1440,6 +1445,8 @@ u32 hfi_process_msg_packet(msm_vidc_callback callback, u32 device_id,
 		mutex_lock(session_lock);
 		session = hfi_process_get_session(sessions, pkt->session_id);
 		mutex_unlock(session_lock);
+		/* Event of type HFI_EVENT_SYS_ERROR will not have any session
+		 * associated with it */
 		if (!session && (msg_hdr->packet != HFI_MSG_EVENT_NOTIFY)) {
 			dprintk(VIDC_ERR, "%s Got invalid session id: %d\n",
 					__func__, pkt->session_id);

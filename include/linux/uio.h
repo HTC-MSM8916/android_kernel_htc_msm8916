@@ -13,10 +13,17 @@
 
 
 struct kvec {
-	void *iov_base; 
+	void *iov_base; /* and that should *never* hold a userland pointer */
 	size_t iov_len;
 };
 
+/*
+ * Total number of bytes covered by an iovec.
+ *
+ * NOTE that it is not safe to use this function until all the iovec's
+ * segment lengths have been validated.  Because the individual lengths can
+ * overflow a size_t when added together.
+ */
 static inline size_t iov_length(const struct iovec *iov, unsigned long nr_segs)
 {
 	unsigned long seg;

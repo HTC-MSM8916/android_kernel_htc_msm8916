@@ -395,11 +395,11 @@ enum camerab_mode_t {
 };
 
 struct msm_sensor_init_params {
-	
+	/* mask of modes supported: 2D, 3D */
 	int                 modes_supported;
-	
+	/* sensor position: front, back */
 	enum camb_position_t position;
-	
+	/* sensor mount angle */
 	uint32_t            sensor_mount_angle;
 };
 
@@ -453,10 +453,7 @@ struct sensorb_cfg_data {
 		struct msm_sensor_info_t      sensor_info;
 		struct msm_sensor_init_params sensor_init_params;
 		void                         *setting;
-		
 		struct fuse_id fuse;
-		
-
 	} cfg;
 };
 
@@ -604,6 +601,9 @@ struct reg_settings_t {
 };
 
 struct region_params_t {
+	/* [0] = ForwardDirection Macro boundary
+	   [1] = ReverseDirection Inf boundary
+	*/
 	uint16_t step_bound[2];
 	uint16_t code_per_step;
 };
@@ -736,17 +736,13 @@ struct msm_actuator_cfg_data {
 		struct msm_actuator_get_info_t get_info;
 		struct msm_actuator_set_position_t setpos;
 		enum af_camera_name cam_name;
-	
 		af_value_t af_value;
-	
 	} cfg;
-	
 	int16_t max_diff;
 	uint32_t gain_G1[5];
 	uint32_t gain_G2[5];
 	uint8_t vcm_freq;
 	uint16_t vcm_freq_ms22e;
-	
 };
 
 enum msm_actuator_write_type {
@@ -774,11 +770,10 @@ struct msm_camera_led_cfg_t {
 	enum msm_camera_led_config_t cfgtype;
 	uint32_t torch_current;
 	uint32_t flash_current[MAX_LED_TRIGGERS];
-	
 	uint32_t ma_value;
-	
 };
 
+/* sensor init structures and enums */
 enum msm_sensor_init_cfg_type_t {
 	CFG_SINIT_PROBE,
 	CFG_SINIT_PROBE_DONE,
@@ -822,6 +817,6 @@ struct sensor_init_cfg_data {
 #define VIDIOC_MSM_SENSOR_INIT_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 10, struct sensor_init_cfg_data)
 
-#define MSM_V4L2_PIX_FMT_META v4l2_fourcc('M', 'E', 'T', 'A') 
+#define MSM_V4L2_PIX_FMT_META v4l2_fourcc('M', 'E', 'T', 'A') /* META */
 
-#endif 
+#endif /* __LINUX_MSM_CAM_SENSOR_H */

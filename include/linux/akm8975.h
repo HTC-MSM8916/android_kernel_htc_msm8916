@@ -1,3 +1,6 @@
+/*
+ * Definitions for akm8975 compass chip.
+ */
 #ifndef AKM8975_H
 #define AKM8975_H
 
@@ -5,7 +8,7 @@
 
 #define AKM8975_I2C_NAME "akm8975"
 
-
+/* Device specific constant values */
 #define AK8975_REG_WIA		0x00
 #define AK8975_REG_INFO		0x01
 #define AK8975_REG_ST1		0x02
@@ -23,12 +26,9 @@
 #define AK8975_REG_TS2		0x0E
 #define AK8975_REG_I2CDIS	0x0F
 
-
-
 #define AK8975_FUSE_ASAX	0x10
 #define AK8975_FUSE_ASAY	0x11
 #define AK8975_FUSE_ASAZ	0x12
-
 
 #define AK8975_CNTL_SNG_MEASURE		0x01
 #define	AK8975_CNTL_CONT_MEASURE	0x02

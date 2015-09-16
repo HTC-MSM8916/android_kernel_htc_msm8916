@@ -429,7 +429,7 @@ static void flush_to_ldisc(struct work_struct *work)
 		return;
 
 	disc = tty_ldisc_ref(tty);
-	if (disc == NULL)
+	if (disc == NULL)	/*  !TTY_LDISC */
 		return;
 
 	spin_lock_irqsave(&buf->lock, flags);

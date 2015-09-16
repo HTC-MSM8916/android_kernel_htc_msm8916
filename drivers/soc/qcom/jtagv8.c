@@ -54,6 +54,7 @@
 #define TZ_DBG_ETM_VER		(0x400000)
 
 
+/* access debug registers using system instructions */
 struct dbg_cpu_ctx {
 	uint32_t		*state;
 };
@@ -374,8 +375,12 @@ static inline void dbg_save_state(int cpu)
 
 	switch (dbg.arch) {
 	case ARM_DEBUG_ARCH_V8:
+		/* Set OS Lock to inform the debugger that the OS is in the
+		 * process of saving debug registers. It prevents accidental
+		 * modification of the debug regs by the external debugger.
+		 */
 		dbg_write(0x1, OSLAR_EL1);
-		
+		/* Ensure OS lock is set before proceeding */
 		isb();
 
 		dbg.state[i++] =  (uint32_t)dbg_readl(MDSCR_EL1);
@@ -389,7 +394,7 @@ static inline void dbg_save_state(int cpu)
 		dbg.state[i++] =  (uint32_t)dbg_readl(OSDTRRX_EL1);
 		dbg.state[i++] =  (uint32_t)dbg_readl(OSDTRTX_EL1);
 
-		
+		/* Set the OS double lock */
 		isb();
 		dbg_write(0x1, OSDLR_EL1);
 		isb();
@@ -408,11 +413,14 @@ static inline void dbg_restore_state(int cpu)
 
 	switch (dbg.arch) {
 	case ARM_DEBUG_ARCH_V8:
-		
+		/* Clear the OS double lock */
 		isb();
 		dbg_write(0x0, OSDLR_EL1);
 		isb();
 
+		/* Set OS lock. Lock will already be set after power collapse
+		 * but this write is included to ensure it is set.
+		 */
 		dbg_write(0x1, OSLAR_EL1);
 		isb();
 
@@ -441,7 +449,7 @@ static void dbg_init_arch_data(void)
 {
 	uint64_t dbgfr;
 
-	
+	/* This will run on core0 so use it to populate parameters */
 	dbgfr = dbg_readq(ID_AA64DFR0_EL1);
 	dbg.arch = BMVAL(dbgfr, 0, 3);
 	dbg.nr_bp = BMVAL(dbgfr, 12, 15) + 1;
@@ -750,8 +758,12 @@ static inline void dbg_save_state(int cpu)
 
 	switch (dbg.arch) {
 	case ARM_DEBUG_ARCH_V8:
+		/* Set OS Lock to inform the debugger that the OS is in the
+		 * process of saving debug registers. It prevents accidental
+		 * modification of the debug regs by the external debugger.
+		 */
 		dbg_write(OSLOCK_MAGIC, DBGOSLAR);
-		
+		/* Ensure OS lock is set before proceeding */
 		isb();
 
 		dbg.state[i++] =  dbg_read(DBGDSCRext);
@@ -765,7 +777,7 @@ static inline void dbg_save_state(int cpu)
 		dbg.state[i++] =  dbg_read(DBGDTRRXext);
 		dbg.state[i++] =  dbg_read(DBGDTRTXext);
 
-		
+		/* Set the OS double lock */
 		isb();
 		dbg_write(0x1, DBGOSDLR);
 		isb();
@@ -784,11 +796,14 @@ static inline void dbg_restore_state(int cpu)
 
 	switch (dbg.arch) {
 	case ARM_DEBUG_ARCH_V8:
-		
+		/* Clear the OS double lock */
 		isb();
 		dbg_write(0x0, DBGOSDLR);
 		isb();
 
+		/* Set OS lock. Lock will already be set after power collapse
+		 * but this write is included to ensure it is set.
+		 */
 		dbg_write(OSLOCK_MAGIC, DBGOSLAR);
 		isb();
 
@@ -817,7 +832,7 @@ static void dbg_init_arch_data(void)
 {
 	uint32_t dbgdidr;
 
-	
+	/* This will run on core0 so use it to populate parameters */
 	dbgdidr = dbg_read(DBGDIDR);
 	dbg.arch = BMVAL(dbgdidr, 16, 19);
 	dbg.nr_ctx_cmp = BMVAL(dbgdidr, 20, 23) + 1;
@@ -827,6 +842,24 @@ static void dbg_init_arch_data(void)
 #endif
 
 #if 0
+/*
+ * msm_jtag_save_state - save debug registers
+ *
+ * Debug registers are saved before power collapse if debug
+ * architecture is supported respectively and TZ isn't supporting
+ * the save and restore of debug registers.
+ *
+ * CONTEXT:
+ * Called with preemption off and interrupts locked from:
+ * 1. per_cpu idle thread context for idle power collapses
+ * or
+ * 2. per_cpu idle thread context for hotplug/suspend power collapse
+ *    for nonboot cpus
+ * or
+ * 3. suspend thread context for suspend power collapse for core0
+ *
+ * In all cases we will run on the same cpu for the entire duration.
+ */
 void msm_jtag_save_state(void)
 {
 	int cpu;
@@ -834,7 +867,7 @@ void msm_jtag_save_state(void)
 	cpu = raw_smp_processor_id();
 
 	msm_jtag_save_cntr[cpu]++;
-	
+	/* ensure counter is updated before moving forward */
 	mb();
 
 	msm_jtag_mm_save_state();
@@ -849,6 +882,13 @@ void msm_jtag_restore_state(void)
 
 	cpu = raw_smp_processor_id();
 
+	/* Attempt restore only if save has been done. If power collapse
+	 * is disabled, hotplug off of non-boot core will result in WFI
+	 * and hence msm_jtag_save_state will not occur. Subsequently,
+	 * during hotplug on of non-boot core when msm_jtag_restore_state
+	 * is called via msm_platform_secondary_init, this check will help
+	 * bail us out without restoring.
+	 */
 	if (msm_jtag_save_cntr[cpu] == msm_jtag_restore_cntr[cpu])
 		return;
 	else if (msm_jtag_save_cntr[cpu] != msm_jtag_restore_cntr[cpu] + 1)
@@ -857,7 +897,7 @@ void msm_jtag_restore_state(void)
 				   (unsigned long)msm_jtag_restore_cntr[cpu]);
 
 	msm_jtag_restore_cntr[cpu]++;
-	
+	/* ensure counter is updated before moving forward */
 	mb();
 
 	if (dbg.save_restore_enabled)
@@ -885,7 +925,7 @@ static int __init msm_jtag_dbg_init(void)
 	if (msm_jtag_fuse_apps_access_disabled())
 		return -EPERM;
 
-	
+	/* This will run on core0 so use it to populate parameters */
 	dbg_init_arch_data();
 
 	if (dbg_arch_supported(dbg.arch)) {
@@ -900,7 +940,7 @@ static int __init msm_jtag_dbg_init(void)
 		goto dbg_out;
 	}
 
-	
+	/* Allocate dbg state save space */
 #ifdef CONFIG_ARM64
 	dbg.state = kzalloc(MAX_DBG_STATE_SIZE * sizeof(uint64_t), GFP_KERNEL);
 #else

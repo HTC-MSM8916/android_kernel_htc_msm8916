@@ -32,16 +32,20 @@
 #include <linux/regulator/cpr-regulator.h>
 #include <soc/qcom/scm.h>
 
+/* Register Offsets for RB-CPR and Bit Definitions */
 
+/* RBCPR Version Register */
 #define REG_RBCPR_VERSION		0
 #define RBCPR_VER_2			0x02
 
+/* RBCPR Gate Count and Target Registers */
 #define REG_RBCPR_GCNT_TARGET(n)	(0x60 + 4 * n)
 
 #define RBCPR_GCNT_TARGET_GCNT_BITS	10
 #define RBCPR_GCNT_TARGET_GCNT_SHIFT	12
 #define RBCPR_GCNT_TARGET_GCNT_MASK	((1<<RBCPR_GCNT_TARGET_GCNT_BITS)-1)
 
+/* RBCPR Timer Control */
 #define REG_RBCPR_TIMER_INTERVAL	0x44
 #define REG_RBIF_TIMER_ADJUST		0x4C
 
@@ -51,6 +55,7 @@
 #define RBIF_TIMER_ADJ_CONS_DOWN_MASK	((1<<RBIF_TIMER_ADJ_CONS_DOWN_BITS)-1)
 #define RBIF_TIMER_ADJ_CONS_DOWN_SHIFT	4
 
+/* RBCPR Config Register */
 #define REG_RBIF_LIMIT			0x48
 #define REG_RBCPR_STEP_QUOT		0x80
 #define REG_RBIF_SW_VLEVEL		0x94
@@ -71,6 +76,7 @@
 #define RBCPR_STEP_QUOT_IDLE_CLK_MASK	((1<<RBCPR_STEP_QUOT_IDLE_CLK_BITS)-1)
 #define RBCPR_STEP_QUOT_IDLE_CLK_SHIFT	8
 
+/* RBCPR Control Register */
 #define REG_RBCPR_CTL			0x90
 
 #define RBCPR_CTL_LOOP_EN			BIT(0)
@@ -85,9 +91,11 @@
 #define RBCPR_CTL_DN_THRESHOLD_MASK	((1<<RBCPR_CTL_DN_THRESHOLD_BITS)-1)
 #define RBCPR_CTL_DN_THRESHOLD_SHIFT	28
 
+/* RBCPR Ack/Nack Response */
 #define REG_RBIF_CONT_ACK_CMD		0x98
 #define REG_RBIF_CONT_NACK_CMD		0x9C
 
+/* RBCPR Result status Register */
 #define REG_RBCPR_RESULT_0		0xA0
 
 #define RBCPR_RESULT0_BUSY_SHIFT	19
@@ -101,6 +109,7 @@
 #define RBCPR_RESULT0_ERROR_STEPS_MASK	((1<<RBCPR_RESULT0_ERROR_STEPS_BITS)-1)
 #define RBCPR_RESULT0_STEP_UP_SHIFT	1
 
+/* RBCPR Interrupt Control Register */
 #define REG_RBIF_IRQ_EN(n)		(0x100 + 4 * n)
 #define REG_RBIF_IRQ_CLEAR		0x110
 #define REG_RBIF_IRQ_STATUS		0x114
@@ -118,10 +127,12 @@
 
 #define CPR_NUM_RING_OSC	8
 
+/* RBCPR Clock Control Register */
 #define RBCPR_CLK_SEL_MASK	BIT(0)
 #define RBCPR_CLK_SEL_19P2_MHZ	0
 #define RBCPR_CLK_SEL_AHB_CLK	BIT(0)
 
+/* CPR eFuse parameters */
 #define CPR_FUSE_TARGET_QUOT_BITS	12
 #define CPR_FUSE_TARGET_QUOT_BITS_MASK	((1<<CPR_FUSE_TARGET_QUOT_BITS)-1)
 #define CPR_FUSE_RO_SEL_BITS		3
@@ -158,31 +169,31 @@ struct cpr_regulator {
 	int				corner;
 	int				ceiling_max;
 
-	
+	/* eFuse parameters */
 	phys_addr_t	efuse_addr;
 	void __iomem	*efuse_base;
 
-	
+	/* Process voltage parameters */
 	u32		pvs_corner_v[CPR_FUSE_CORNER_MAX];
-	
+	/* Process voltage variables */
 	u32		pvs_bin;
 	u32		speed_bin;
 	u32		pvs_version;
 
-	
+	/* APC voltage regulator */
 	struct regulator	*vdd_apc;
 
-	
+	/* Dependency parameters */
 	struct regulator	*vdd_mx;
 	int			vdd_mx_vmax;
 	int			vdd_mx_vmin_method;
 	int			vdd_mx_vmin;
 	int			vdd_mx_corner_map[CPR_FUSE_CORNER_MAX];
 
-	
+	/* mem-acc regulator */
 	struct regulator	*mem_acc_vreg;
 
-	
+	/* CPR parameters */
 	u64		cpr_fuse_bits;
 	bool		cpr_fuse_disable;
 	bool		cpr_fuse_local;
@@ -203,7 +214,7 @@ struct cpr_regulator {
 	int		*save_ctl;
 	int		*save_irq;
 
-	
+	/* Config parameters */
 	bool		enable;
 	u32		ref_clk_khz;
 	u32		timer_delay_us;
@@ -291,6 +302,20 @@ static u64 cpr_read_efuse_row(struct cpr_regulator *cpr_vreg, u32 row_num,
 	return efuse_bits;
 }
 
+/**
+ * cpr_read_efuse_param() - read a parameter from one or two eFuse rows
+ * @cpr_vreg:	Pointer to cpr_regulator struct for this regulator.
+ * @row_start:	Fuse row number to start reading from.
+ * @bit_start:	The LSB of the parameter to read from the fuse.
+ * @bit_len:	The length of the parameter in bits.
+ * @use_tz_api:	Flag to indicate if an SCM call should be used to read the fuse.
+ *
+ * This function reads a parameter of specified offset and bit size out of one
+ * or two consecutive eFuse rows.  This allows for the reading of parameters
+ * that happen to be split between two eFuse rows.
+ *
+ * Returns the fuse parameter on success or 0 on failure.
+ */
 static u64 cpr_read_efuse_param(struct cpr_regulator *cpr_vreg, int row_start,
 		int bit_start, int bit_len, bool use_tz_api)
 {
@@ -308,9 +333,9 @@ static u64 cpr_read_efuse_param(struct cpr_regulator *cpr_vreg, int row_start,
 		return 0;
 	}
 
-	
+	/* Allow bit indexing to start beyond the end of the start row. */
 	if (bit_start >= 64) {
-		row_start += bit_start >> 6; 
+		row_start += bit_start >> 6; /* equivalent to bit_start / 64 */
 		bit_start &= 0x3F;
 	}
 
@@ -396,7 +421,7 @@ static void cpr_ctl_enable(struct cpr_regulator *cpr_vreg, int corner)
 	if (cpr_vreg->is_cpr_suspended)
 		return;
 
-	
+	/* Program Consecutive Up & Down */
 	val = ((cpr_vreg->timer_cons_down & RBIF_TIMER_ADJ_CONS_DOWN_MASK)
 			<< RBIF_TIMER_ADJ_CONS_DOWN_SHIFT) |
 		(cpr_vreg->timer_cons_up & RBIF_TIMER_ADJ_CONS_UP_MASK);
@@ -484,6 +509,7 @@ static void cpr_corner_switch(struct cpr_regulator *cpr_vreg, int corner)
 	cpr_corner_restore(cpr_vreg, corner);
 }
 
+/* Module parameter ops */
 static int cpr_enable_param_set(const char *val, const struct kernel_param *kp)
 {
 	int rc;
@@ -508,7 +534,7 @@ static int cpr_enable_param_set(const char *val, const struct kernel_param *kp)
 		  the_cpr->corner_map[the_cpr->corner]);
 
 	if (the_cpr->cpr_fuse_disable) {
-		
+		/* Already disabled */
 		pr_info("CPR disabled by fuse\n");
 		goto _exit;
 	}
@@ -603,7 +629,7 @@ static int cpr_scale_voltage(struct cpr_regulator *cpr_vreg, int corner,
 	int rc = 0, vdd_mx_vmin = 0;
 	int fuse_corner = cpr_vreg->corner_map[corner];
 
-	
+	/* Determine the vdd_mx voltage */
 	if (dir != NO_CHANGE && cpr_vreg->vdd_mx != NULL)
 		vdd_mx_vmin = cpr_mx_get(cpr_vreg, corner, new_apc_volt);
 
@@ -668,13 +694,13 @@ static void cpr_scale(struct cpr_regulator *cpr_vreg,
 			cpr_debug_irq("gcnt = 0x%08x (quot = %d)\n", gcnt,
 					quot);
 
-			
+			/* Maximize the UP threshold */
 			reg_mask = RBCPR_CTL_UP_THRESHOLD_MASK <<
 					RBCPR_CTL_UP_THRESHOLD_SHIFT;
 			reg_val = reg_mask;
 			cpr_ctl_modify(cpr_vreg, reg_mask, reg_val);
 
-			
+			/* Disable UP interrupt */
 			cpr_irq_set(cpr_vreg, CPR_INT_DEFAULT & ~CPR_INT_UP);
 
 			return;
@@ -687,7 +713,7 @@ static void cpr_scale(struct cpr_regulator *cpr_vreg,
 			error_steps = cpr_vreg->vdd_apc_step_up_limit;
 		}
 
-		
+		/* Calculate new voltage */
 		new_volt = last_volt + (error_steps * cpr_vreg->step_volt);
 		if (new_volt > cpr_vreg->ceiling_volt[fuse_corner]) {
 			cpr_debug_irq("new_volt(%d) >= ceiling(%d): Clamp\n",
@@ -703,16 +729,16 @@ static void cpr_scale(struct cpr_regulator *cpr_vreg,
 		}
 		cpr_vreg->last_volt[corner] = new_volt;
 
-		
+		/* Disable auto nack down */
 		reg_mask = RBCPR_CTL_SW_AUTO_CONT_NACK_DN_EN;
 		reg_val = 0;
 
 		cpr_ctl_modify(cpr_vreg, reg_mask, reg_val);
 
-		
+		/* Re-enable default interrupts */
 		cpr_irq_set(cpr_vreg, CPR_INT_DEFAULT);
 
-		
+		/* Ack */
 		cpr_irq_clr_ack(cpr_vreg);
 
 		cpr_debug_irq(
@@ -732,13 +758,13 @@ static void cpr_scale(struct cpr_regulator *cpr_vreg,
 			cpr_debug_irq("gcnt = 0x%08x (quot = %d)\n", gcnt,
 					quot);
 
-			
+			/* Enable auto nack down */
 			reg_mask = RBCPR_CTL_SW_AUTO_CONT_NACK_DN_EN;
 			reg_val = RBCPR_CTL_SW_AUTO_CONT_NACK_DN_EN;
 
 			cpr_ctl_modify(cpr_vreg, reg_mask, reg_val);
 
-			
+			/* Disable DOWN interrupt */
 			cpr_irq_set(cpr_vreg, CPR_INT_DEFAULT & ~CPR_INT_DOWN);
 
 			return;
@@ -751,7 +777,7 @@ static void cpr_scale(struct cpr_regulator *cpr_vreg,
 			error_steps = cpr_vreg->vdd_apc_step_down_limit;
 		}
 
-		
+		/* Calculte new voltage */
 		new_volt = last_volt - (error_steps * cpr_vreg->step_volt);
 		if (new_volt < cpr_vreg->floor_volt[fuse_corner]) {
 			cpr_debug_irq("new_volt(%d) < floor(%d): Clamp\n",
@@ -766,17 +792,17 @@ static void cpr_scale(struct cpr_regulator *cpr_vreg,
 		}
 		cpr_vreg->last_volt[corner] = new_volt;
 
-		
+		/* Restore default threshold for UP */
 		reg_mask = RBCPR_CTL_UP_THRESHOLD_MASK <<
 				RBCPR_CTL_UP_THRESHOLD_SHIFT;
 		reg_val = cpr_vreg->up_threshold <<
 				RBCPR_CTL_UP_THRESHOLD_SHIFT;
 		cpr_ctl_modify(cpr_vreg, reg_mask, reg_val);
 
-		
+		/* Re-enable default interrupts */
 		cpr_irq_set(cpr_vreg, CPR_INT_DEFAULT);
 
-		
+		/* Ack */
 		cpr_irq_clr_ack(cpr_vreg);
 
 		cpr_debug_irq(
@@ -810,7 +836,7 @@ static irqreturn_t cpr_irq_handler(int irq, void *dev)
 		goto _exit;
 	}
 
-	
+	/* Following sequence of handling is as per each IRQ's priority */
 	if (reg_val & CPR_INT_UP) {
 		cpr_scale(cpr_vreg, UP);
 	} else if (reg_val & CPR_INT_DOWN) {
@@ -820,13 +846,13 @@ static irqreturn_t cpr_irq_handler(int irq, void *dev)
 	} else if (reg_val & CPR_INT_MAX) {
 		cpr_irq_clr_nack(cpr_vreg);
 	} else if (reg_val & CPR_INT_MID) {
-		
+		/* RBCPR_CTL_SW_AUTO_CONT_ACK_EN is enabled */
 		cpr_debug_irq("IRQ occured for Mid Flag\n");
 	} else {
 		pr_err("IRQ occured for unknown flag (0x%08x)\n", reg_val);
 	}
 
-	
+	/* Save register values for the corner */
 	cpr_corner_save(cpr_vreg, cpr_vreg->corner);
 
 _exit:
@@ -846,7 +872,7 @@ static int cpr_regulator_enable(struct regulator_dev *rdev)
 	struct cpr_regulator *cpr_vreg = rdev_get_drvdata(rdev);
 	int rc = 0;
 
-	
+	/* Enable dependency power before vdd_apc */
 	if (cpr_vreg->vdd_mx) {
 		rc = regulator_enable(cpr_vreg->vdd_mx);
 		if (rc) {
@@ -1026,7 +1052,7 @@ static int cpr_config(struct cpr_regulator *cpr_vreg, struct device *dev)
 	void __iomem *rbcpr_clk;
 	int size;
 
-	
+	/* Use 19.2 MHz clock for CPR. */
 	rbcpr_clk = ioremap(cpr_vreg->rbcpr_clk_addr, 4);
 	if (!rbcpr_clk) {
 		pr_err("Unable to map rbcpr_clk\n");
@@ -1038,46 +1064,46 @@ static int cpr_config(struct cpr_regulator *cpr_vreg, struct device *dev)
 	writel_relaxed(reg, rbcpr_clk);
 	iounmap(rbcpr_clk);
 
-	
+	/* Disable interrupt and CPR */
 	cpr_write(cpr_vreg, REG_RBIF_IRQ_EN(cpr_vreg->irq_line), 0);
 	cpr_write(cpr_vreg, REG_RBCPR_CTL, 0);
 
-	
+	/* Program the default HW Ceiling, Floor and vlevel */
 	val = ((RBIF_LIMIT_CEILING_DEFAULT & RBIF_LIMIT_CEILING_MASK)
 			<< RBIF_LIMIT_CEILING_SHIFT)
 		| (RBIF_LIMIT_FLOOR_DEFAULT & RBIF_LIMIT_FLOOR_MASK);
 	cpr_write(cpr_vreg, REG_RBIF_LIMIT, val);
 	cpr_write(cpr_vreg, REG_RBIF_SW_VLEVEL, RBIF_SW_VLEVEL_DEFAULT);
 
-	
+	/* Clear the target quotient value and gate count of all ROs */
 	for (i = 0; i < CPR_NUM_RING_OSC; i++)
 		cpr_write(cpr_vreg, REG_RBCPR_GCNT_TARGET(i), 0);
 
-	
+	/* Init and save gcnt */
 	gcnt = (cpr_vreg->ref_clk_khz * cpr_vreg->gcnt_time_us) / 1000;
 	gcnt = (gcnt & RBCPR_GCNT_TARGET_GCNT_MASK) <<
 			RBCPR_GCNT_TARGET_GCNT_SHIFT;
 	cpr_vreg->gcnt = gcnt;
 
-	
+	/* Program the step quotient and idle clocks */
 	val = ((cpr_vreg->idle_clocks & RBCPR_STEP_QUOT_IDLE_CLK_MASK)
 			<< RBCPR_STEP_QUOT_IDLE_CLK_SHIFT) |
 		(cpr_vreg->step_quotient & RBCPR_STEP_QUOT_STEPQUOT_MASK);
 	cpr_write(cpr_vreg, REG_RBCPR_STEP_QUOT, val);
 
-	
+	/* Program the delay count for the timer */
 	val = (cpr_vreg->ref_clk_khz * cpr_vreg->timer_delay_us) / 1000;
 	cpr_write(cpr_vreg, REG_RBCPR_TIMER_INTERVAL, val);
 	pr_info("Timer count: 0x%0x (for %d us)\n", val,
 		cpr_vreg->timer_delay_us);
 
-	
+	/* Program Consecutive Up & Down */
 	val = ((cpr_vreg->timer_cons_down & RBIF_TIMER_ADJ_CONS_DOWN_MASK)
 			<< RBIF_TIMER_ADJ_CONS_DOWN_SHIFT) |
 		(cpr_vreg->timer_cons_up & RBIF_TIMER_ADJ_CONS_UP_MASK);
 	cpr_write(cpr_vreg, REG_RBIF_TIMER_ADJUST, val);
 
-	
+	/* Program the control register */
 	cpr_vreg->up_threshold &= RBCPR_CTL_UP_THRESHOLD_MASK;
 	cpr_vreg->down_threshold &= RBCPR_CTL_DN_THRESHOLD_MASK;
 	val = (cpr_vreg->up_threshold << RBCPR_CTL_UP_THRESHOLD_SHIFT)
@@ -1152,6 +1178,14 @@ static int cpr_voltage_uplift_wa_inc_volt(struct cpr_regulator *cpr_vreg,
 	return rc;
 }
 
+/*
+ * Property qcom,cpr-fuse-init-voltage specifies the fuse position of the
+ * initial voltage for each fuse corner. MSB of the fuse value is a sign
+ * bit, and the remaining bits define the steps of the offset. Each step has
+ * units of microvolts defined in the qcom,cpr-fuse-init-voltage-step property.
+ * The initial voltages can be calculated using the formula:
+ * pvs_corner_v[corner] = ceiling_volt[corner] + (sign * steps * step_size_uv)
+ */
 static int cpr_pvs_per_corner_init(struct device_node *of_node,
 				struct cpr_regulator *cpr_vreg)
 {
@@ -1222,6 +1256,15 @@ static int cpr_pvs_per_corner_init(struct device_node *of_node,
 	return 0;
 }
 
+/*
+ * A single PVS bin is stored in a fuse that's position is defined either
+ * in the qcom,pvs-fuse-redun property or in the qcom,pvs-fuse property.
+ * The fuse value defined in the qcom,pvs-fuse-redun-sel property is used
+ * to pick between the primary or redudant PVS fuse position.
+ * After the PVS bin value is read out successfully, it is used as the row
+ * index to get initial voltages for each fuse corner from the voltage table
+ * defined in the qcom,pvs-voltage-table property.
+ */
 static int cpr_pvs_single_bin_init(struct device_node *of_node,
 				struct cpr_regulator *cpr_vreg)
 {
@@ -1256,7 +1299,7 @@ static int cpr_pvs_single_bin_init(struct device_node *of_node,
 		}
 	}
 
-	
+	/* Construct PVS process # from the efuse bits */
 	efuse_bits = cpr_read_efuse_row(cpr_vreg, pvs_fuse[0], pvs_fuse[3]);
 	cpr_vreg->pvs_bin = (efuse_bits >> pvs_fuse[1]) &
 				((1 << pvs_fuse[2]) - 1);
@@ -1284,6 +1327,13 @@ static int cpr_pvs_single_bin_init(struct device_node *of_node,
 	return 0;
 }
 
+/*
+ * The initial voltage for each fuse corner may be determined by one of two
+ * possible styles of fuse. If qcom,cpr-fuse-init-voltage is present, then
+ * the initial voltages are encoded in a fuse for each fuse corner. If it is
+ * not present, then the initial voltages are all determined using a single
+ * PVS bin fuse value.
+ */
 static int cpr_pvs_init(struct platform_device *pdev,
 			       struct cpr_regulator *cpr_vreg)
 {
@@ -1384,7 +1434,7 @@ static int cpr_apc_init(struct platform_device *pdev,
 		return rc;
 	}
 
-	
+	/* Check dependencies */
 	if (of_property_read_bool(of_node, "vdd-mx-supply")) {
 		cpr_vreg->vdd_mx = devm_regulator_get(&pdev->dev, "vdd-mx");
 		if (IS_ERR_OR_NULL(cpr_vreg->vdd_mx)) {
@@ -1396,7 +1446,7 @@ static int cpr_apc_init(struct platform_device *pdev,
 		}
 	}
 
-	
+	/* Parse dependency parameters */
 	if (cpr_vreg->vdd_mx) {
 		rc = of_property_read_u32(of_node, "qcom,vdd-mx-vmax",
 				 &cpr_vreg->vdd_mx_vmax);
@@ -1481,6 +1531,16 @@ static void cpr_parse_pvs_version_fuse(struct cpr_regulator *cpr_vreg,
 	}
 }
 
+/*
+ * cpr_get_corner_quot_adjustment() -- get the quot_adjust for each corner.
+ *
+ * Get the corner to fuse corner (SVS/NORMAL/TURBO) mappings and corner to
+ * APC clock frequency mappings from device tree.
+ * Calculate the quotient adjustment scaling factor for those corners mapping
+ * to the TURBO fuse corner.
+ * Calculate the quotient adjustment for each corner which map to the TURBO
+ * fuse corner.
+ */
 static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 					struct device *dev)
 {
@@ -1556,6 +1616,10 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 
 	cpr_parse_pvs_version_fuse(cpr_vreg, dev->of_node);
 
+	/*
+	 * According to speed_bin && pvs_version, get the maximum
+	 * corner corresponding to SVS/NORMAL/TURBO fuse corner.
+	 */
 	for (i = 0; i < size; i += 5) {
 		if (tmp[i] == cpr_vreg->speed_bin &&
 			tmp[i + 1] == cpr_vreg->pvs_version) {
@@ -1566,6 +1630,12 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 		}
 	}
 	kfree(tmp);
+	/*
+	 * Return success if the virtual corner values read from
+	 * qcom,cpr-speed-bin-max-corners property are incorrect,
+	 * which make sure the driver could continue run without
+	 * error.
+	 */
 	if (turbo_corner <= normal_corner ||
 			turbo_corner > cpr_vreg->num_corners) {
 		cpr_debug("turbo:%d should be larger than normal:%d\n",
@@ -1622,6 +1692,17 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 		return 0;
 	}
 
+	/*
+	 * Get the quot adjust scaling factor, according to:
+	 * scaling =
+	 * min(1000 * (QUOT(fused @turbo) - QUOT(fused @normal)) /
+	 * (freq_turbo - freq_normal), max_factor)
+	 *
+	 * @QUOT(fused @turbo): quotient read from fuse for TURBO fuse corner;
+	 * @QUOT(fused @normal): quotient read from fuse for NORMAL fuse corner;
+	 * @freq_turbo: MHz, max frequency running at TURBO fuse corner;
+	 * @freq_normal: MHz, max frequency running at NORMAL fuse corner.
+	 */
 
 	freq_turbo = freq_mappings[turbo_corner];
 	freq_normal = freq_mappings[normal_corner];
@@ -1631,7 +1712,7 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 		kfree(freq_mappings);
 		return -EINVAL;
 	}
-	freq_turbo /= 1000000;	
+	freq_turbo /= 1000000;	/* MHz */
 	freq_normal /= 1000000;
 	scaling = 1000 *
 		(cpr_vreg->cpr_fuse_target_quot[CPR_FUSE_CORNER_TURBO] -
@@ -1641,8 +1722,17 @@ static int cpr_get_corner_quot_adjustment(struct cpr_regulator *cpr_vreg,
 	pr_info("quotient adjustment scaling factor: %d.%03d\n",
 			scaling / 1000, scaling % 1000);
 
+	/*
+	 * Walk through the corners mapped to the TURBO fuse corner and
+	 * calculate the quotient adjustment for each one using the following
+	 * formula:
+	 * quot_adjust = (freq_turbo - freq_corner) * scaling / 1000
+	 *
+	 * @freq_turbo: MHz, max frequency running at TURBO fuse corner;
+	 * @freq_corner: MHz, frequency running at a corner.
+	 */
 	for (i = turbo_corner; i > normal_corner; i--) {
-		freq_corner = freq_mappings[i] / 1000000; 
+		freq_corner = freq_mappings[i] / 1000000; /* MHz */
 		if (freq_corner > 0) {
 			cpr_vreg->quot_adjust[i] =
 				scaling * (freq_turbo - freq_corner) / 1000;
@@ -1734,7 +1824,7 @@ static int cpr_init_cpr_efuse(struct platform_device *pdev,
 		return rc;
 	}
 
-	
+	/* Read the control bits of eFuse */
 	fuse_bits = cpr_read_efuse_row(cpr_vreg, cpr_fuse_row[0],
 					cpr_fuse_row[1]);
 	pr_info("[row:%d] = 0x%llx\n", cpr_fuse_row[0], fuse_bits);
@@ -1760,7 +1850,7 @@ static int cpr_init_cpr_efuse(struct platform_device *pdev,
 		} else {
 			u32 temp_row[2];
 
-			
+			/* Use original fuse if no optional property */
 			if (of_property_read_bool(of_node,
 					"qcom,cpr-fuse-bp-cpr-disable")) {
 				CPR_PROP_READ_U32(of_node,
@@ -1861,7 +1951,7 @@ static int cpr_init_cpr_efuse(struct platform_device *pdev,
 		cpr_vreg->cpr_fuse_disable = 1;
 		pr_err("cpr_fuse_bits = 0: set cpr_fuse_disable = 1\n");
 	} else {
-		
+		/* Check if the target quotients are too close together */
 		int *quot = cpr_vreg->cpr_fuse_target_quot;
 		bool valid_fuse = true;
 
@@ -1957,7 +2047,7 @@ static int cpr_init_cpr_parameters(struct platform_device *pdev,
 	if (rc)
 		return rc;
 
-	
+	/* Init module parameter with the DT value */
 	cpr_vreg->enable = of_property_read_bool(of_node, "qcom,cpr-enable");
 	cpr_enable = (int) cpr_vreg->enable;
 	pr_info("CPR is %s by default.\n",
@@ -1991,24 +2081,24 @@ static int cpr_init_cpr(struct platform_device *pdev,
 	cpr_vreg->rbcpr_base = devm_ioremap(&pdev->dev, res->start,
 					    resource_size(res));
 
-	
+	/* Init all voltage set points of APC regulator for CPR */
 	rc = cpr_init_cpr_voltages(cpr_vreg, &pdev->dev);
 	if (rc)
 		return rc;
 
-	
+	/* Init CPR configuration parameters */
 	rc = cpr_init_cpr_parameters(pdev, cpr_vreg);
 	if (rc)
 		return rc;
 
-	
+	/* Get and Init interrupt */
 	cpr_vreg->cpr_irq = platform_get_irq(pdev, 0);
 	if (!cpr_vreg->cpr_irq) {
 		pr_err("missing CPR IRQ\n");
 		return -EINVAL;
 	}
 
-	
+	/* Configure CPR HW but keep it disabled */
 	rc = cpr_config(cpr_vreg, &pdev->dev);
 	if (rc)
 		return rc;
@@ -2062,6 +2152,12 @@ static void cpr_parse_cond_min_volt_fuse(struct cpr_regulator *cpr_vreg,
 {
 	int rc;
 	u32 fuse_sel[5];
+	/*
+	 * Restrict all pvs corner voltages to a minimum value of
+	 * qcom,cpr-cond-min-voltage if the fuse defined in
+	 * qcom,cpr-fuse-cond-min-volt-sel does not read back with
+	 * the expected value.
+	 */
 	rc = of_property_read_u32_array(of_node,
 			"qcom,cpr-fuse-cond-min-volt-sel", fuse_sel, 5);
 	if (!rc) {
@@ -2453,7 +2549,7 @@ static int cpr_regulator_remove(struct platform_device *pdev)
 
 	cpr_vreg = platform_get_drvdata(pdev);
 	if (cpr_vreg) {
-		
+		/* Disable CPR */
 		if (cpr_is_allowed(cpr_vreg)) {
 			cpr_ctl_disable(cpr_vreg);
 			cpr_irq_set(cpr_vreg, 0);
@@ -2484,6 +2580,12 @@ static struct platform_driver cpr_regulator_driver = {
 	.resume		= cpr_regulator_resume,
 };
 
+/**
+ * cpr_regulator_init() - register cpr-regulator driver
+ *
+ * This initialization function should be called in systems in which driver
+ * registration ordering must be controlled precisely.
+ */
 int __init cpr_regulator_init(void)
 {
 	static bool initialized;

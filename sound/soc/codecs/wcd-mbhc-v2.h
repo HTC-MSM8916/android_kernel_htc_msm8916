@@ -72,25 +72,23 @@ struct wcd_mbhc_cb {
 };
 
 struct wcd_mbhc {
-	
+	/* Delayed work to report long button press */
 	struct delayed_work mbhc_btn_dwork;
 	int buttons_pressed;
 	struct wcd_mbhc_config *mbhc_cfg;
 	const struct wcd_mbhc_cb *mbhc_cb;
 
-	u32 hph_status; 
-	u8 hphlocp_cnt; 
-	u8 hphrocp_cnt; 
+	u32 hph_status; /* track headhpone status */
+	u8 hphlocp_cnt; /* headphone left ocp retry */
+	u8 hphrocp_cnt; /* headphone right ocp retry */
 
 	wait_queue_head_t wait_btn_press;
 	bool is_btn_press;
 	bool is_hs_inserted;
 	u8 current_plug;
 	bool in_swch_irq_handler;
-	bool hphl_swh; 
-	bool gnd_swh; 
-	u8 micbias1_cap_mode; 
-	u8 micbias2_cap_mode; 
+	bool hphl_swh; /*track HPHL switch NC / NO */
+	bool gnd_swh; /*track GND switch NC / NO */
 	bool hs_detect_work_stop;
 	bool micbias_enable;
 	bool btn_press_intr;
@@ -98,12 +96,12 @@ struct wcd_mbhc {
 
 	struct snd_soc_codec *codec;
 
-	
+	/* track PA/DAC state to sync with userspace */
 	unsigned long hph_pa_dac_state;
 	unsigned long event_state;
 	unsigned long jiffies_atreport;
 
-	
+	/* impedance of hphl and hphr */
 	uint32_t zl, zr;
 	bool impedance_detect;
 
@@ -111,9 +109,9 @@ struct wcd_mbhc {
 	struct snd_soc_jack button_jack;
 	struct mutex codec_resource_lock;
 
-	
+	/* Holds codec specific interrupt mapping */
 	const struct wcd_mbhc_intr *intr_ids;
-	
+	/* Work to correct accessory type */
 	struct work_struct correct_plug_swch;
 	struct notifier_block nblock;
 };
@@ -129,4 +127,4 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 		      const struct wcd_mbhc_intr *mbhc_cdc_intr_ids,
 		      bool impedance_det_en);
 void wcd_mbhc_deinit(struct wcd_mbhc *mbhc);
-#endif 
+#endif /* __WCD_MBHC_V2_H__ */

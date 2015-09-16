@@ -18,6 +18,44 @@
  *
  */
 
+/* This driver handles only L2TP data frames; control frames are handled by a
+ * userspace application.
+ *
+ * To send data in an L2TP session, userspace opens a PPPoL2TP socket and
+ * attaches it to a bound UDP socket with local tunnel_id / session_id and
+ * peer tunnel_id / session_id set. Data can then be sent or received using
+ * regular socket sendmsg() / recvmsg() calls. Kernel parameters of the socket
+ * can be read or modified using ioctl() or [gs]etsockopt() calls.
+ *
+ * When a PPPoL2TP socket is connected with local and peer session_id values
+ * zero, the socket is treated as a special tunnel management socket.
+ *
+ * Here's example userspace code to create a socket for sending/receiving data
+ * over an L2TP session:-
+ *
+ *	struct sockaddr_pppol2tp sax;
+ *	int fd;
+ *	int session_fd;
+ *
+ *	fd = socket(AF_PPPOX, SOCK_DGRAM, PX_PROTO_OL2TP);
+ *
+ *	sax.sa_family = AF_PPPOX;
+ *	sax.sa_protocol = PX_PROTO_OL2TP;
+ *	sax.pppol2tp.fd = tunnel_fd;	// bound UDP socket
+ *	sax.pppol2tp.addr.sin_addr.s_addr = addr->sin_addr.s_addr;
+ *	sax.pppol2tp.addr.sin_port = addr->sin_port;
+ *	sax.pppol2tp.addr.sin_family = AF_INET;
+ *	sax.pppol2tp.s_tunnel  = tunnel_id;
+ *	sax.pppol2tp.s_session = session_id;
+ *	sax.pppol2tp.d_tunnel  = peer_tunnel_id;
+ *	sax.pppol2tp.d_session = peer_session_id;
+ *
+ *	session_fd = connect(fd, (struct sockaddr *)&sax, sizeof(sax));
+ *
+ * A pppd plugin that allows PPP traffic to be carried over L2TP using
+ * this driver is available from the OpenL2TP project at
+ * http://openl2tp.sourceforge.net.
+ */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -68,17 +106,28 @@
 
 #define PPPOL2TP_DRV_VERSION	"V2.0"
 
+/* Space for UDP, L2TP and PPP headers */
 #define PPPOL2TP_HEADER_OVERHEAD	40
 
+/* Number of bytes to build transmit L2TP headers.
+ * Unfortunately the size is different depending on whether sequence numbers
+ * are enabled.
+ */
 #define PPPOL2TP_L2TP_HDR_SIZE_SEQ		10
 #define PPPOL2TP_L2TP_HDR_SIZE_NOSEQ		6
 
+/* Private data of each session. This data lives at the end of struct
+ * l2tp_session, referenced via session->priv[].
+ */
 struct pppol2tp_session {
-	int			owner;		
+	int			owner;		/* pid that opened the socket */
 
-	struct sock		*sock;		
-	struct sock		*tunnel_sock;	
-	int			flags;		
+	struct sock		*sock;		/* Pointer to the session
+						 * PPPoX socket */
+	struct sock		*tunnel_sock;	/* Pointer to the tunnel UDP
+						 * socket */
+	int			flags;		/* accessed by PPPIOCGFLAGS.
+						 * Unused. */
 };
 
 static int pppol2tp_xmit(struct ppp_channel *chan, struct sk_buff *skb);
@@ -89,6 +138,8 @@ static const struct ppp_channel_ops pppol2tp_chan_ops = {
 
 static const struct proto_ops pppol2tp_ops;
 
+/* Helpers to obtain tunnel/session contexts from sockets.
+ */
 static inline struct l2tp_session *pppol2tp_sock_to_session(struct sock *sk)
 {
 	struct l2tp_session *session;
@@ -109,9 +160,20 @@ out:
 	return session;
 }
 
+/*****************************************************************************
+ * Receive data handling
+ *****************************************************************************/
 
 static int pppol2tp_recv_payload_hook(struct sk_buff *skb)
 {
+	/* Skip PPP header, if present.	 In testing, Microsoft L2TP clients
+	 * don't send the PPP header (PPP header compression enabled), but
+	 * other clients can include the header. So we cope with both cases
+	 * here. The PPP header is always FF03 when using L2TP.
+	 *
+	 * Note that skb->data[] isn't dereferenced from a u16 ptr here since
+	 * the field may be unaligned.
+	 */
 	if (!pskb_may_pull(skb, 2))
 		return 1;
 
@@ -121,6 +183,8 @@ static int pppol2tp_recv_payload_hook(struct sk_buff *skb)
 	return 0;
 }
 
+/* Receive message. This is the recvmsg for the PPPoL2TP socket.
+ */
 static int pppol2tp_recvmsg(struct kiocb *iocb, struct socket *sock,
 			    struct msghdr *msg, size_t len,
 			    int flags)
@@ -158,6 +222,9 @@ static void pppol2tp_recv(struct l2tp_session *session, struct sk_buff *skb, int
 	struct pppol2tp_session *ps = l2tp_session_priv(session);
 	struct sock *sk = NULL;
 
+	/* If the socket is bound, send it in to PPP's input queue. Otherwise
+	 * queue it on the session socket.
+	 */
 	sk = ps->sock;
 	if (sk == NULL)
 		goto no_sock;
@@ -168,6 +235,18 @@ static void pppol2tp_recv(struct l2tp_session *session, struct sk_buff *skb, int
 			 "%s: recv %d byte data frame, passing to ppp\n",
 			 session->name, data_len);
 
+		/* We need to forget all info related to the L2TP packet
+		 * gathered in the skb as we are going to reuse the same
+		 * skb for the inner packet.
+		 * Namely we need to:
+		 * - reset xfrm (IPSec) information as it applies to
+		 *   the outer L2TP packet and not to the inner one
+		 * - release the dst to force a route lookup on the inner
+		 *   IP packet since skb->dst currently points to the dst
+		 *   of the UDP tunnel
+		 * - reset netfilter information as it doesn't apply
+		 *   to the inner packet either
+		 */
 		secpath_reset(skb);
 		skb_dst_drop(skb);
 		nf_reset(skb);
@@ -178,7 +257,7 @@ static void pppol2tp_recv(struct l2tp_session *session, struct sk_buff *skb, int
 		l2tp_info(session, PPPOL2TP_MSG_DATA, "%s: socket not bound\n",
 			  session->name);
 
-		
+		/* Not bound. Nothing we can do, so discard. */
 		atomic_long_inc(&session->stats.rx_errors);
 		kfree_skb(skb);
 	}
@@ -206,7 +285,14 @@ static void pppol2tp_session_sock_put(struct l2tp_session *session)
 		sock_put(ps->sock);
 }
 
+/************************************************************************
+ * Transmit handling
+ ***********************************************************************/
 
+/* This is the sendmsg for the PPPoL2TP pppol2tp_session socket.  We come here
+ * when a user application does a sendmsg() on the session socket. L2TP and
+ * PPP headers must be inserted into the user's data.
+ */
 static int pppol2tp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *m,
 			    size_t total_len)
 {
@@ -223,7 +309,7 @@ static int pppol2tp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msgh
 	if (sock_flag(sk, SOCK_DEAD) || !(sk->sk_state & PPPOX_CONNECTED))
 		goto error;
 
-	
+	/* Get session and tunnel contexts */
 	error = -EBADF;
 	session = pppol2tp_sock_to_session(sk);
 	if (session == NULL)
@@ -236,7 +322,7 @@ static int pppol2tp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msgh
 
 	uhlen = (tunnel->encap == L2TP_ENCAPTYPE_UDP) ? sizeof(struct udphdr) : 0;
 
-	
+	/* Allocate a socket buffer */
 	error = -ENOMEM;
 	skb = sock_wmalloc(sk, NET_SKB_PAD + sizeof(struct iphdr) +
 			   uhlen + session->hdr_len +
@@ -245,19 +331,19 @@ static int pppol2tp_sendmsg(struct kiocb *iocb, struct socket *sock, struct msgh
 	if (!skb)
 		goto error_put_sess_tun;
 
-	
+	/* Reserve space for headers. */
 	skb_reserve(skb, NET_SKB_PAD);
 	skb_reset_network_header(skb);
 	skb_reserve(skb, sizeof(struct iphdr));
 	skb_reset_transport_header(skb);
 	skb_reserve(skb, uhlen);
 
-	
+	/* Add PPP header */
 	skb->data[0] = ppph[0];
 	skb->data[1] = ppph[1];
 	skb_put(skb, 2);
 
-	
+	/* Copy user data into skb */
 	error = memcpy_fromiovec(skb_put(skb, total_len), m->msg_iov,
 				 total_len);
 	if (error < 0) {
@@ -282,6 +368,20 @@ error:
 	return error;
 }
 
+/* Transmit function called by generic PPP driver.  Sends PPP frame
+ * over PPPoL2TP socket.
+ *
+ * This is almost the same as pppol2tp_sendmsg(), but rather than
+ * being called with a msghdr from userspace, it is called with a skb
+ * from the kernel.
+ *
+ * The supplied skb from ppp doesn't have enough headroom for the
+ * insertion of L2TP, UDP and IP headers so we need to allocate more
+ * headroom in the skb. This will create a cloned skb. But we must be
+ * careful in the error case because the caller will expect to free
+ * the skb it supplied, not our cloned skb. So we take care to always
+ * leave the original skb unfreed if we return an error.
+ */
 static int pppol2tp_xmit(struct ppp_channel *chan, struct sk_buff *skb)
 {
 	static const u8 ppph[2] = { 0xff, 0x03 };
@@ -295,7 +395,7 @@ static int pppol2tp_xmit(struct ppp_channel *chan, struct sk_buff *skb)
 	if (sock_flag(sk, SOCK_DEAD) || !(sk->sk_state & PPPOX_CONNECTED))
 		goto abort;
 
-	
+	/* Get session and tunnel contexts from the socket */
 	session = pppol2tp_sock_to_session(sk);
 	if (session == NULL)
 		goto abort;
@@ -310,14 +410,14 @@ static int pppol2tp_xmit(struct ppp_channel *chan, struct sk_buff *skb)
 
 	uhlen = (tunnel->encap == L2TP_ENCAPTYPE_UDP) ? sizeof(struct udphdr) : 0;
 	headroom = NET_SKB_PAD +
-		   sizeof(struct iphdr) + 
-		   uhlen +		
-		   session->hdr_len +	
-		   sizeof(ppph);	
+		   sizeof(struct iphdr) + /* IP header */
+		   uhlen +		/* UDP header (if L2TP_ENCAPTYPE_UDP) */
+		   session->hdr_len +	/* L2TP header */
+		   sizeof(ppph);	/* PPP header */
 	if (skb_cow_head(skb, headroom))
 		goto abort_put_sess_tun;
 
-	
+	/* Setup PPP header */
 	__skb_push(skb, sizeof(ppph));
 	skb->data[0] = ppph[0];
 	skb->data[1] = ppph[1];
@@ -335,12 +435,17 @@ abort_put_sess_tun:
 abort_put_sess:
 	sock_put(sk);
 abort:
-	
+	/* Free the original skb */
 	kfree_skb(skb);
 	return 1;
 }
 
+/*****************************************************************************
+ * Session (and tunnel control) socket create/destroy.
+ *****************************************************************************/
 
+/* Called by l2tp_core when a session socket is being closed.
+ */
 static void pppol2tp_session_close(struct l2tp_session *session)
 {
 	struct pppol2tp_session *ps = l2tp_session_priv(session);
@@ -352,12 +457,15 @@ static void pppol2tp_session_close(struct l2tp_session *session)
 
 	if (sock) {
 		inet_shutdown(sock, 2);
-		
+		/* Don't let the session go away before our socket does */
 		l2tp_session_inc_refcount(session);
 	}
 	return;
 }
 
+/* Really kill the session socket. (Called from sock_put() if
+ * refcnt == 0.)
+ */
 static void pppol2tp_session_destruct(struct sock *sk)
 {
 	struct l2tp_session *session = sk->sk_user_data;
@@ -369,6 +477,8 @@ static void pppol2tp_session_destruct(struct sock *sk)
 	return;
 }
 
+/* Called when the PPPoX socket (session) is closed.
+ */
 static int pppol2tp_release(struct socket *sock)
 {
 	struct sock *sk = sock->sk;
@@ -385,14 +495,14 @@ static int pppol2tp_release(struct socket *sock)
 
 	pppox_unbind_sock(sk);
 
-	
+	/* Signal the death of the socket. */
 	sk->sk_state = PPPOX_DEAD;
 	sock_orphan(sk);
 	sock->sk = NULL;
 
 	session = pppol2tp_sock_to_session(sk);
 
-	
+	/* Purge any queued data */
 	if (session != NULL) {
 		__l2tp_session_unhash(session);
 		l2tp_session_queue_purge(session);
@@ -403,6 +513,10 @@ static int pppol2tp_release(struct socket *sock)
 
 	release_sock(sk);
 
+	/* This will delete the session context via
+	 * pppol2tp_session_destruct() if the socket's refcnt drops to
+	 * zero.
+	 */
 	sock_put(sk);
 
 	return 0;
@@ -429,6 +543,8 @@ static int pppol2tp_backlog_recv(struct sock *sk, struct sk_buff *skb)
 	return NET_RX_SUCCESS;
 }
 
+/* socket() handler. Initialize a new struct sock.
+ */
 static int pppol2tp_create(struct net *net, struct socket *sock)
 {
 	int error = -ENOMEM;
@@ -470,6 +586,8 @@ static void pppol2tp_show(struct seq_file *m, void *arg)
 }
 #endif
 
+/* connect() handler. Attach a PPPoX socket to a tunnel UDP socket
+ */
 static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 			    int sockaddr_len, int flags)
 {
@@ -493,16 +611,22 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 	if (sp->sa_protocol != PX_PROTO_OL2TP)
 		goto end;
 
-	
+	/* Check for already bound sockets */
 	error = -EBUSY;
 	if (sk->sk_state & PPPOX_CONNECTED)
 		goto end;
 
-	
+	/* We don't supporting rebinding anyway */
 	error = -EALREADY;
 	if (sk->sk_user_data)
-		goto end; 
+		goto end; /* socket is already attached */
 
+	/* Get params from socket address. Handle L2TPv2 and L2TPv3.
+	 * This is nasty because there are different sockaddr_pppol2tp
+	 * structs for L2TPv2, L2TPv3, over IPv4 and IPv6. We use
+	 * the sockaddr size to determine which structure the caller
+	 * is using.
+	 */
 	peer_tunnel_id = 0;
 	if (sockaddr_len == sizeof(struct sockaddr_pppol2tp)) {
 		fd = sp->pppol2tp.fd;
@@ -538,16 +662,20 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 		peer_session_id = sp6->pppol2tp.d_session;
 	} else {
 		error = -EINVAL;
-		goto end; 
+		goto end; /* bad socket address */
 	}
 
-	
+	/* Don't bind if tunnel_id is 0 */
 	error = -EINVAL;
 	if (tunnel_id == 0)
 		goto end;
 
 	tunnel = l2tp_tunnel_find(sock_net(sk), tunnel_id);
 
+	/* Special case: create tunnel context if session_id and
+	 * peer_session_id is 0. Otherwise look up tunnel using supplied
+	 * tunnel id.
+	 */
 	if ((session_id == 0) && (peer_session_id == 0)) {
 		if (tunnel == NULL) {
 			struct l2tp_tunnel_cfg tcfg = {
@@ -559,12 +687,12 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 				goto end;
 		}
 	} else {
-		
+		/* Error if we can't find the tunnel */
 		error = -ENOENT;
 		if (tunnel == NULL)
 			goto end;
 
-		
+		/* Error if socket is not prepped */
 		if (tunnel->sock == NULL)
 			goto end;
 	}
@@ -575,11 +703,20 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 	if (tunnel->peer_tunnel_id == 0)
 		tunnel->peer_tunnel_id = peer_tunnel_id;
 
+	/* Create session if it doesn't already exist. We handle the
+	 * case where a session was previously created by the netlink
+	 * interface by checking that the session doesn't already have
+	 * a socket and its tunnel socket are what we expect. If any
+	 * of those checks fail, return EEXIST to the caller.
+	 */
 	session = l2tp_session_find(sock_net(sk), tunnel, session_id);
 	if (session == NULL) {
+		/* Default MTU must allow space for UDP/L2TP/PPP
+		 * headers.
+		 */
 		cfg.mtu = cfg.mru = 1500 - PPPOL2TP_HEADER_OVERHEAD;
 
-		
+		/* Allocate and initialize a new session context. */
 		session = l2tp_session_create(sizeof(struct pppol2tp_session),
 					      tunnel, session_id,
 					      peer_session_id, &cfg);
@@ -593,12 +730,12 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 		if (ps->sock != NULL)
 			goto end;
 
-		
+		/* consistency checks */
 		if (ps->tunnel_sock != tunnel->sock)
 			goto end;
 	}
 
-	
+	/* Associate session with its PPPoL2TP socket */
 	ps = l2tp_session_priv(session);
 	ps->owner	     = current->pid;
 	ps->sock	     = sk;
@@ -610,10 +747,13 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 	session->show		= pppol2tp_show;
 #endif
 
+	/* We need to know each time a skb is dropped from the reorder
+	 * queue.
+	 */
 	session->ref = pppol2tp_session_sock_hold;
 	session->deref = pppol2tp_session_sock_put;
 
-	
+	/* If PMTU discovery was enabled, use the MTU that was discovered */
 	dst = sk_dst_get(sk);
 	if (dst != NULL) {
 		u32 pmtu = dst_mtu(__sk_dst_get(sk));
@@ -623,12 +763,21 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 		dst_release(dst);
 	}
 
+	/* Special case: if source & dest session_id == 0x0000, this
+	 * socket is being created to manage the tunnel. Just set up
+	 * the internal context for use by ioctl() and sockopt()
+	 * handlers.
+	 */
 	if ((session->session_id == 0) &&
 	    (session->peer_session_id == 0)) {
 		error = 0;
 		goto out_no_ppp;
 	}
 
+	/* The only header we need to worry about is the L2TP
+	 * header. This size is different depending on whether
+	 * sequence numbers are enabled for the data channel.
+	 */
 	po->chan.hdrlen = PPPOL2TP_L2TP_HDR_SIZE_NOSEQ;
 
 	po->chan.private = sk;
@@ -640,7 +789,7 @@ static int pppol2tp_connect(struct socket *sock, struct sockaddr *uservaddr,
 		goto end;
 
 out_no_ppp:
-	
+	/* This is how we get the session context from the socket. */
 	sk->sk_user_data = session;
 	sk->sk_state = PPPOX_CONNECTED;
 	l2tp_info(session, PPPOL2TP_MSG_CONTROL, "%s: created\n",
@@ -654,6 +803,8 @@ end:
 
 #ifdef CONFIG_L2TP_V3
 
+/* Called when creating sessions via the netlink interface.
+ */
 static int pppol2tp_session_create(struct net *net, u32 tunnel_id, u32 session_id, u32 peer_session_id, struct l2tp_session_cfg *cfg)
 {
 	int error;
@@ -663,28 +814,28 @@ static int pppol2tp_session_create(struct net *net, u32 tunnel_id, u32 session_i
 
 	tunnel = l2tp_tunnel_find(net, tunnel_id);
 
-	
+	/* Error if we can't find the tunnel */
 	error = -ENOENT;
 	if (tunnel == NULL)
 		goto out;
 
-	
+	/* Error if tunnel socket is not prepped */
 	if (tunnel->sock == NULL)
 		goto out;
 
-	
+	/* Check that this session doesn't already exist */
 	error = -EEXIST;
 	session = l2tp_session_find(net, tunnel, session_id);
 	if (session != NULL)
 		goto out;
 
-	
+	/* Default MTU values. */
 	if (cfg->mtu == 0)
 		cfg->mtu = 1500 - PPPOL2TP_HEADER_OVERHEAD;
 	if (cfg->mru == 0)
 		cfg->mru = cfg->mtu;
 
-	
+	/* Allocate and initialize a new session context. */
 	error = -ENOMEM;
 	session = l2tp_session_create(sizeof(struct pppol2tp_session),
 				      tunnel, session_id,
@@ -704,8 +855,10 @@ out:
 	return error;
 }
 
-#endif 
+#endif /* CONFIG_L2TP_V3 */
 
+/* getname() support.
+ */
 static int pppol2tp_getname(struct socket *sock, struct sockaddr *uaddr,
 			    int *usockaddr_len, int peer)
 {
@@ -821,6 +974,16 @@ end:
 	return error;
 }
 
+/****************************************************************************
+ * ioctl() handlers.
+ *
+ * The PPPoX socket is created for L2TP sessions: tunnels have their own UDP
+ * sockets. However, in order to control kernel tunnel features, we allow
+ * userspace to create a special "tunnel" PPPoX socket which is used for
+ * control only.  Tunnel PPPoX sockets have session_id == 0 and simply allow
+ * the user application to issue L2TP setsockopt(), getsockopt() and ioctl()
+ * calls.
+ ****************************************************************************/
 
 static void pppol2tp_copy_stats(struct pppol2tp_ioc_stats *dest,
 				struct l2tp_stats *stats)
@@ -835,6 +998,8 @@ static void pppol2tp_copy_stats(struct pppol2tp_ioc_stats *dest,
 	dest->rx_errors = atomic_long_read(&stats->rx_errors);
 }
 
+/* Session ioctl helper.
+ */
 static int pppol2tp_session_ioctl(struct l2tp_session *session,
 				  unsigned int cmd, unsigned long arg)
 {
@@ -963,6 +1128,12 @@ static int pppol2tp_session_ioctl(struct l2tp_session *session,
 	return err;
 }
 
+/* Tunnel ioctl helper.
+ *
+ * Note the special handling for PPPIOCGL2TPSTATS below. If the ioctl data
+ * specifies a session_id, the session ioctl handler is called. This allows an
+ * application to retrieve session stats via a tunnel socket.
+ */
 static int pppol2tp_tunnel_ioctl(struct l2tp_tunnel *tunnel,
 				 unsigned int cmd, unsigned long arg)
 {
@@ -989,7 +1160,7 @@ static int pppol2tp_tunnel_ioctl(struct l2tp_tunnel *tunnel,
 			break;
 		}
 		if (stats.session_id != 0) {
-			
+			/* resend to session ioctl handler */
 			struct l2tp_session *session =
 				l2tp_session_find(sock_net(sk), tunnel, stats.session_id);
 			if (session != NULL)
@@ -1021,6 +1192,9 @@ static int pppol2tp_tunnel_ioctl(struct l2tp_tunnel *tunnel,
 	return err;
 }
 
+/* Main ioctl() handler.
+ * Dispatch to tunnel or session helpers depending on the socket.
+ */
 static int pppol2tp_ioctl(struct socket *sock, unsigned int cmd,
 			  unsigned long arg)
 {
@@ -1042,12 +1216,15 @@ static int pppol2tp_ioctl(struct socket *sock, unsigned int cmd,
 	    (!(sk->sk_state & (PPPOX_CONNECTED | PPPOX_BOUND))))
 		goto end;
 
-	
+	/* Get session context from the socket */
 	err = -EBADF;
 	session = pppol2tp_sock_to_session(sk);
 	if (session == NULL)
 		goto end;
 
+	/* Special case: if session's session_id is zero, treat ioctl as a
+	 * tunnel ioctl
+	 */
 	ps = l2tp_session_priv(session);
 	if ((session->session_id == 0) &&
 	    (session->peer_session_id == 0)) {
@@ -1069,7 +1246,18 @@ end:
 	return err;
 }
 
+/*****************************************************************************
+ * setsockopt() / getsockopt() support.
+ *
+ * The PPPoX socket is created for L2TP sessions: tunnels have their own UDP
+ * sockets. In order to control kernel tunnel features, we allow userspace to
+ * create a special "tunnel" PPPoX socket which is used for control only.
+ * Tunnel PPPoX sockets have session_id == 0 and simply allow the user
+ * application to issue L2TP setsockopt(), getsockopt() and ioctl() calls.
+ *****************************************************************************/
 
+/* Tunnel setsockopt() helper.
+ */
 static int pppol2tp_tunnel_setsockopt(struct sock *sk,
 				      struct l2tp_tunnel *tunnel,
 				      int optname, int val)
@@ -1091,6 +1279,8 @@ static int pppol2tp_tunnel_setsockopt(struct sock *sk,
 	return err;
 }
 
+/* Session setsockopt helper.
+ */
 static int pppol2tp_session_setsockopt(struct sock *sk,
 				       struct l2tp_session *session,
 				       int optname, int val)
@@ -1159,6 +1349,11 @@ static int pppol2tp_session_setsockopt(struct sock *sk,
 	return err;
 }
 
+/* Main setsockopt() entry point.
+ * Does API checks, then calls either the tunnel or session setsockopt
+ * handler, according to whether the PPPoL2TP socket is a for a regular
+ * session or the special tunnel type.
+ */
 static int pppol2tp_setsockopt(struct socket *sock, int level, int optname,
 			       char __user *optval, unsigned int optlen)
 {
@@ -1182,12 +1377,14 @@ static int pppol2tp_setsockopt(struct socket *sock, int level, int optname,
 	if (sk->sk_user_data == NULL)
 		goto end;
 
-	
+	/* Get session context from the socket */
 	err = -EBADF;
 	session = pppol2tp_sock_to_session(sk);
 	if (session == NULL)
 		goto end;
 
+	/* Special case: if session_id == 0x0000, treat as operation on tunnel
+	 */
 	ps = l2tp_session_priv(session);
 	if ((session->session_id == 0) &&
 	    (session->peer_session_id == 0)) {
@@ -1209,6 +1406,8 @@ end:
 	return err;
 }
 
+/* Tunnel getsockopt helper. Called with sock locked.
+ */
 static int pppol2tp_tunnel_getsockopt(struct sock *sk,
 				      struct l2tp_tunnel *tunnel,
 				      int optname, int *val)
@@ -1230,6 +1429,8 @@ static int pppol2tp_tunnel_getsockopt(struct sock *sk,
 	return err;
 }
 
+/* Session getsockopt helper. Called with sock locked.
+ */
 static int pppol2tp_session_getsockopt(struct sock *sk,
 				       struct l2tp_session *session,
 				       int optname, int *val)
@@ -1274,6 +1475,11 @@ static int pppol2tp_session_getsockopt(struct sock *sk,
 	return err;
 }
 
+/* Main getsockopt() entry point.
+ * Does API checks, then calls either the tunnel or session getsockopt
+ * handler, according to whether the PPPoX socket is a for a regular session
+ * or the special tunnel type.
+ */
 static int pppol2tp_getsockopt(struct socket *sock, int level, int optname,
 			       char __user *optval, int __user *optlen)
 {
@@ -1299,13 +1505,13 @@ static int pppol2tp_getsockopt(struct socket *sock, int level, int optname,
 	if (sk->sk_user_data == NULL)
 		goto end;
 
-	
+	/* Get the session context */
 	err = -EBADF;
 	session = pppol2tp_sock_to_session(sk);
 	if (session == NULL)
 		goto end;
 
-	
+	/* Special case: if session_id == 0x0000, treat as operation on tunnel */
 	ps = l2tp_session_priv(session);
 	if ((session->session_id == 0) &&
 	    (session->peer_session_id == 0)) {
@@ -1334,6 +1540,11 @@ end:
 	return err;
 }
 
+/*****************************************************************************
+ * /proc filesystem for debug
+ * Since the original pppol2tp driver provided /proc/net/pppol2tp for
+ * L2TPv2, we dump only L2TPv2 tunnels and sessions here.
+ *****************************************************************************/
 
 static unsigned int pppol2tp_net_id;
 
@@ -1341,10 +1552,10 @@ static unsigned int pppol2tp_net_id;
 
 struct pppol2tp_seq_data {
 	struct seq_net_private p;
-	int tunnel_idx;			
-	int session_idx;		
+	int tunnel_idx;			/* current tunnel */
+	int session_idx;		/* index of session within current tunnel */
 	struct l2tp_tunnel *tunnel;
-	struct l2tp_session *session;	
+	struct l2tp_session *session;	/* NULL means get next tunnel */
 };
 
 static void pppol2tp_next_tunnel(struct net *net, struct pppol2tp_seq_data *pd)
@@ -1356,7 +1567,7 @@ static void pppol2tp_next_tunnel(struct net *net, struct pppol2tp_seq_data *pd)
 		if (pd->tunnel == NULL)
 			break;
 
-		
+		/* Ignore L2TPv3 tunnels */
 		if (pd->tunnel->version < 3)
 			break;
 	}
@@ -1391,7 +1602,7 @@ static void *pppol2tp_seq_start(struct seq_file *m, loff_t *offs)
 	else
 		pppol2tp_next_session(net, pd);
 
-	
+	/* NULL tunnel and session indicates end of list */
 	if ((pd->tunnel == NULL) && (pd->session == NULL))
 		pd = NULL;
 
@@ -1407,7 +1618,7 @@ static void *pppol2tp_seq_next(struct seq_file *m, void *v, loff_t *pos)
 
 static void pppol2tp_seq_stop(struct seq_file *p, void *v)
 {
-	
+	/* nothing to do */
 }
 
 static void pppol2tp_seq_tunnel_show(struct seq_file *m, void *v)
@@ -1477,7 +1688,7 @@ static int pppol2tp_seq_show(struct seq_file *m, void *v)
 {
 	struct pppol2tp_seq_data *pd = v;
 
-	
+	/* display header on line 1 */
 	if (v == SEQ_START_TOKEN) {
 		seq_puts(m, "PPPoL2TP driver info, " PPPOL2TP_DRV_VERSION "\n");
 		seq_puts(m, "TUNNEL name, user-data-ok session-count\n");
@@ -1489,6 +1700,8 @@ static int pppol2tp_seq_show(struct seq_file *m, void *v)
 		goto out;
 	}
 
+	/* Show the tunnel or session context.
+	 */
 	if (pd->session == NULL)
 		pppol2tp_seq_tunnel_show(m, pd->tunnel);
 	else
@@ -1505,6 +1718,10 @@ static const struct seq_operations pppol2tp_seq_ops = {
 	.show		= pppol2tp_seq_show,
 };
 
+/* Called when our /proc file is opened. We allocate data for use when
+ * iterating our tunnel / session contexts and store it in the private
+ * data of the seq_file.
+ */
 static int pppol2tp_proc_open(struct inode *inode, struct file *file)
 {
 	return seq_open_net(inode, file, &pppol2tp_seq_ops,
@@ -1519,8 +1736,11 @@ static const struct file_operations pppol2tp_proc_fops = {
 	.release	= seq_release_net,
 };
 
-#endif 
+#endif /* CONFIG_PROC_FS */
 
+/*****************************************************************************
+ * Network namespace
+ *****************************************************************************/
 
 static __net_init int pppol2tp_init_net(struct net *net)
 {
@@ -1549,6 +1769,9 @@ static struct pernet_operations pppol2tp_net_ops = {
 	.id   = &pppol2tp_net_id,
 };
 
+/*****************************************************************************
+ * Init and cleanup
+ *****************************************************************************/
 
 static const struct proto_ops pppol2tp_ops = {
 	.family		= AF_PPPOX,
@@ -1583,7 +1806,7 @@ static const struct l2tp_nl_cmd_ops pppol2tp_nl_cmd_ops = {
 	.session_delete	= l2tp_session_delete,
 };
 
-#endif 
+#endif /* CONFIG_L2TP_V3 */
 
 static int __init pppol2tp_init(void)
 {

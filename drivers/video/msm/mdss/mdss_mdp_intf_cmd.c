@@ -22,6 +22,7 @@
 
 #define MAX_SESSIONS 2
 
+/* wait for at most 2 vsync for lowest refresh rate (24hz) */
 #define KOFF_TIMEOUT msecs_to_jiffies(84)
 
 #define STOP_TIMEOUT msecs_to_jiffies(16 * (VSYNC_EXPIRE_TICK + 2))
@@ -54,7 +55,7 @@ struct mdss_mdp_cmd_ctx mdss_mdp_cmd_ctx_list[MAX_SESSIONS];
 static inline u32 mdss_mdp_cmd_line_count(struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_mdp_mixer *mixer;
-	u32 cnt = 0xffff;	
+	u32 cnt = 0xffff;	/* init it to an invalid value */
 	u32 init;
 	u32 height;
 
@@ -83,7 +84,7 @@ static inline u32 mdss_mdp_cmd_line_count(struct mdss_mdp_ctl *ctl)
 	cnt = mdss_mdp_pingpong_read
 		(mixer, MDSS_MDP_REG_PP_INT_COUNT_VAL) & 0xffff;
 
-	if (cnt < init)		
+	if (cnt < init)		/* wrap around happened at height */
 		cnt += (height - init);
 	else
 		cnt -= init;
@@ -272,7 +273,7 @@ static void mdss_mdp_cmd_readptr_done(void *arg)
 		if (ctx->rdptr_enabled)
 			ctx->rdptr_enabled--;
 
-		
+		/* keep clk on during kickoff */
 		if (ctx->rdptr_enabled == 0 && ctx->koff_cnt)
 			ctx->rdptr_enabled++;
 	}
@@ -586,6 +587,9 @@ int mdss_mdp_cmd_kickoff(struct mdss_mdp_ctl *ctl, void *arg)
 
 	mdss_mdp_cmd_set_partial_roi(ctl);
 
+	/*
+	 * tx dcs command if had any
+	 */
 	mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_DSI_CMDLIST_KOFF,
 						(void *)&ctx->recovery);
 	INIT_COMPLETION(ctx->pp_comp);

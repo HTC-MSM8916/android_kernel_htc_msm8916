@@ -1,8 +1,12 @@
+/*
+ * Definitions for akm8963 compass chip.
+ */
 #ifndef AKM8963_H
 #define AKM8963_H
 
 #include <linux/ioctl.h>
 
+/* Device specific constant values */
 #define AK8963_REG_WIA		0x00
 #define AK8963_REG_INFO		0x01
 #define AK8963_REG_ST1		0x02
@@ -44,6 +48,7 @@
 #define AKM8963_ST2_HOLF				0x08
 #define AKM8963_ST2_BITM				0x10
 
+/* To avoid device dependency, convert to general name */
 #define AKM_I2C_NAME			"akm8963"
 #define AKM_MISCDEV_NAME		"akm8963_dev"
 #define AKM_SYSCLS_NAME			"compass"
@@ -80,6 +85,7 @@
 
 #define AKMIO				0xA1
 
+/* IOCTLs for AKM library */
 #define ECS_IOCTL_READ				_IOWR(AKMIO, 0x01, char)
 #define ECS_IOCTL_WRITE				_IOW(AKMIO, 0x02, char)
 #define ECS_IOCTL_RESET				_IO(AKMIO, 0x03)
@@ -102,7 +108,6 @@ struct akm8963_platform_data {
 	int gpio_int;
 	unsigned int int_flags;
 	bool use_int;
-
 };
 
 #endif

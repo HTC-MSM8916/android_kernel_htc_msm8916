@@ -27,7 +27,6 @@
 #include <linux/input.h>
 #include <linux/time.h>
 
-
 struct cpu_sync {
 	struct task_struct *thread;
 	wait_queue_head_t sync_wq;
@@ -48,7 +47,6 @@ static int param_get_input_boost_freq(char *buffer, struct kernel_param *kp);
 static DEFINE_PER_CPU(struct task_struct *, up_task);
 
 static DEFINE_PER_CPU(struct cpu_sync, sync_info);
-
 static struct workqueue_struct *cpu_boost_wq;
 
 static unsigned int boost_ms;
@@ -128,6 +126,17 @@ static int param_get_input_boost_freq(char *buffer, struct kernel_param *kp)
 	return strlen(buffer);
 }
 
+/*
+ * The CPUFREQ_ADJUST notifier is used to override the current policy min to
+ * make sure policy min >= boost_min. The cpufreq framework then does the job
+ * of enforcing the new policy.
+ *
+ * The sync kthread needs to run on the CPU in question to avoid deadlocks in
+ * the wake up code. Achieve this by binding the thread to the respective
+ * CPU. But a CPU going offline unbinds threads from that CPU. So, set it up
+ * again each time the CPU comes back up. We can use CPUFREQ_START to figure
+ * out a CPU is coming online instead of registering for hotplug notifiers.
+ */
 static int boost_adjust_notify(struct notifier_block *nb, unsigned long val,
 				void *data)
 {
@@ -174,7 +183,7 @@ static void do_boost_rem(struct work_struct *work)
 
 	pr_debug("Removing boost for CPU%d\n", s->cpu);
 	s->boost_min = 0;
-	
+	/* Force policy re-evaluation to trigger adjust notifier. */
 	cpufreq_update_policy(s->cpu);
 }
 
@@ -185,7 +194,7 @@ static void do_input_boost_rem(struct work_struct *work)
 
 	pr_debug("Removing input boost for CPU%d\n", s->cpu);
 	s->input_boost_min = 0;
-	
+	/* Force policy re-evaluation to trigger adjust notifier. */
 	cpufreq_update_policy(s->cpu);
 }
 
@@ -234,9 +243,18 @@ static int boost_mig_sync_thread(void *data)
 
 		s->boost_min = req_freq;
 
-		
+		/* Force policy re-evaluation to trigger adjust notifier. */
 		get_online_cpus();
 		if (cpu_online(src_cpu))
+			/*
+			 * Send an unchanged policy update to the source
+			 * CPU. Even though the policy isn't changed from
+			 * its existing boosted or non-boosted state
+			 * notifying the source CPU will let the governor
+			 * know a boost happened on another CPU and that it
+			 * should re-evaluate the frequency at the next timer
+			 * event without interference from a min sample time.
+			 */
 			cpufreq_update_policy(src_cpu);
 		if (cpu_online(dest_cpu)) {
 			cpufreq_update_policy(dest_cpu);
@@ -272,7 +290,7 @@ static int boost_migration_notify(struct notifier_block *nb,
 	if (!boost_ms)
 		return NOTIFY_OK;
 
-	
+	/* Avoid deadlock in try_to_wake_up() */
 	if (s->thread == current)
 		return NOTIFY_OK;
 
@@ -397,7 +415,7 @@ static void cpuboost_input_disconnect(struct input_handle *handle)
 }
 
 static const struct input_device_id cpuboost_ids[] = {
-	
+	/* multi-touch touchscreen */
 	{
 		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
 			INPUT_DEVICE_ID_MATCH_ABSBIT,
@@ -406,7 +424,7 @@ static const struct input_device_id cpuboost_ids[] = {
 			BIT_MASK(ABS_MT_POSITION_X) |
 			BIT_MASK(ABS_MT_POSITION_Y) },
 	},
-	
+	/* touchpad */
 	{
 		.flags = INPUT_DEVICE_ID_MATCH_KEYBIT |
 			INPUT_DEVICE_ID_MATCH_ABSBIT,
@@ -414,7 +432,7 @@ static const struct input_device_id cpuboost_ids[] = {
 		.absbit = { [BIT_WORD(ABS_X)] =
 			BIT_MASK(ABS_X) | BIT_MASK(ABS_Y) },
 	},
-	
+	/* Keypad */
 	{
 		.flags = INPUT_DEVICE_ID_MATCH_EVBIT,
 		.evbit = { BIT_MASK(EV_KEY) },

@@ -40,6 +40,7 @@
 #include <trace/events/trace_rpm_smd.h>
 
 #include "smd_private.h"
+/* Debug Definitions */
 enum {
 	MSM_RPM_LOG_REQUEST_PRETTY	= BIT(0),
 	MSM_RPM_LOG_REQUEST_RAW		= BIT(1),
@@ -95,9 +96,10 @@ enum {
 };
 
 static const uint32_t msm_rpm_request_service[MSM_RPM_MSG_TYPE_NR] = {
-	0x716572, 
+	0x716572, /* 'req\0' */
 };
 
+/*the order of fields matter and reflect the order expected by the RPM*/
 struct rpm_request_header {
 	uint32_t service_type;
 	uint32_t request_len;
@@ -118,7 +120,7 @@ struct kvp {
 
 struct msm_rpm_kvp_data {
 	uint32_t key;
-	uint32_t nbytes; 
+	uint32_t nbytes; /* number of bytes */
 	uint8_t *value;
 	bool valid;
 };
@@ -335,7 +337,7 @@ int msm_rpm_smd_buffer_request(char *buf, uint32_t size, gfp_t flag)
 			pr_err("%s(): Error updating sleep request\n",
 					__func__);
 	} else {
-		
+		/* handle unsent requests */
 		tr_update(slp, buf);
 	}
 
@@ -412,6 +414,13 @@ static int msm_rpm_flush_requests(bool print)
 		ret = msm_rpm_send_smd_buffer(s->buf,
 				get_buf_len(s->buf), true);
 
+		/*
+		 * RPM acks need to be handled here if we have sent over
+		 * 24 messages such that we do not overrun SMD buffer. Since
+		 * we expect only sleep sets at this point (RPM PC would be
+		 * disallowed if we had pending active requests), we need not
+		 * process these sleep set acks.
+		 */
 		count++;
 		if (count > MAX_WAIT_ON_ACK) {
 			int len;
@@ -447,6 +456,9 @@ struct msm_rpm_request {
 	uint32_t numbytes;
 };
 
+/*
+ * Data related to message acknowledgement
+ */
 
 LIST_HEAD(msm_rpm_wait_list);
 
@@ -534,6 +546,10 @@ static int msm_rpm_add_kvp_data_common(struct msm_rpm_request *handle,
 			return -ENOMEM;
 		}
 	} else {
+		/* We enter the else case, if a key already exists but the
+		 * data doesn't match. In which case, we should zero the data
+		 * out.
+		 */
 		memset(handle->kvp[i].value, 0, data_size);
 	}
 
@@ -650,6 +666,7 @@ int msm_rpm_add_kvp_data_noirq(struct msm_rpm_request *handle,
 }
 EXPORT_SYMBOL(msm_rpm_add_kvp_data_noirq);
 
+/* Runs in interrupt context */
 static void msm_rpm_notify(void *data, unsigned event)
 {
 	struct msm_rpm_driver_data *pdata = (struct msm_rpm_driver_data *)data;
@@ -709,6 +726,12 @@ static uint32_t msm_rpm_get_next_msg_id(void)
 {
 	uint32_t id;
 
+	/*
+	 * A message id of 0 is used by the driver to indicate a error
+	 * condition. The RPM driver uses a id of 1 to indicate unsent data
+	 * when the data sent over hasn't been modified. This isn't a error
+	 * scenario and wait for ack returns a success when the message id is 1.
+	 */
 
 	do {
 		id = atomic_inc_return(&msm_rpm_msg_id);
@@ -765,6 +788,10 @@ static void msm_rpm_process_ack(uint32_t msg_id, int errno)
 		}
 		elem = NULL;
 	}
+	/* Special case where the sleep driver doesn't
+	 * wait for ACKs. This would decrease the latency involved with
+	 * entering RPM assisted power collapse.
+	 */
 	if (!elem)
 		trace_rpm_ack_recd(0, msg_id);
 
@@ -887,7 +914,7 @@ static void msm_rpm_log_request(struct msm_rpm_request *cdata)
 
 	if ((msm_rpm_debug_mask & MSM_RPM_LOG_REQUEST_PRETTY)
 	    && (msm_rpm_debug_mask & MSM_RPM_LOG_REQUEST_RAW)) {
-		
+		/* Both pretty and raw formatting */
 		memcpy(name, &cdata->msg_hdr.resource_type, sizeof(uint32_t));
 		pos += scnprintf(buf + pos, buflen - pos,
 			", rsc_type=0x%08X (%s), rsc_id=%u; ",
@@ -931,7 +958,7 @@ static void msm_rpm_log_request(struct msm_rpm_request *cdata)
 			prev_valid++;
 		}
 	} else if (msm_rpm_debug_mask & MSM_RPM_LOG_REQUEST_PRETTY) {
-		
+		/* Pretty formatting only */
 		memcpy(name, &cdata->msg_hdr.resource_type, sizeof(uint32_t));
 		pos += scnprintf(buf + pos, buflen - pos, " %s %u; ", name,
 				cdata->msg_hdr.resource_id);
@@ -961,7 +988,7 @@ static void msm_rpm_log_request(struct msm_rpm_request *cdata)
 			prev_valid++;
 		}
 	} else {
-		
+		/* Raw formatting only */
 		pos += scnprintf(buf + pos, buflen - pos,
 			", rsc_type=0x%08X, rsc_id=%u; ",
 			cdata->msg_hdr.resource_type,
@@ -1047,7 +1074,7 @@ static int msm_rpm_send_data(struct msm_rpm_request *cdata,
 	cdata->req_hdr.request_len = cdata->msg_hdr.data_len + msg_hdr_sz;
 	msg_size = cdata->req_hdr.request_len + req_hdr_sz;
 
-	
+	/* populate data_len */
 	if (msg_size > cdata->numbytes) {
 		kfree(cdata->buf);
 		cdata->numbytes = msg_size;
@@ -1064,7 +1091,7 @@ static int msm_rpm_send_data(struct msm_rpm_request *cdata,
 	tmpbuff += req_hdr_sz + msg_hdr_sz;
 
 	for (i = 0; (i < cdata->write_idx); i++) {
-		
+		/* Sanity check */
 		BUG_ON((tmpbuff - cdata->buf) > cdata->numbytes);
 
 		if (!cdata->kvp[i].valid)
@@ -1245,6 +1272,9 @@ int msm_rpm_wait_for_ack_noirq(uint32_t msg_id)
 	elem = msm_rpm_get_entry_from_msg_id(msg_id);
 
 	if (!elem)
+		/* Should this be a bug
+		 * Is it ok for another thread to read the msg?
+		 */
 		goto wait_ack_cleanup;
 
 	if (elem->errno != INIT_ERROR) {
@@ -1332,6 +1362,10 @@ bail:
 }
 EXPORT_SYMBOL(msm_rpm_send_message_noirq);
 
+/**
+ * During power collapse, the rpm driver disables the SMD interrupts to make
+ * sure that the interrupt doesn't wakes us from sleep.
+ */
 int msm_rpm_enter_sleep(bool print, const struct cpumask *cpumask)
 {
 	if (standalone)
@@ -1343,6 +1377,10 @@ int msm_rpm_enter_sleep(bool print, const struct cpumask *cpumask)
 }
 EXPORT_SYMBOL(msm_rpm_enter_sleep);
 
+/**
+ * When the system resumes from power collapse, the SMD interrupt disabled by
+ * enter function has to reenabled to continue processing SMD message.
+ */
 void msm_rpm_exit_sleep(void)
 {
 	if (standalone)

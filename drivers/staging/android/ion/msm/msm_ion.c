@@ -112,6 +112,10 @@ static struct ion_heap_desc ion_heap_meta[] = {
 struct ion_client *msm_ion_client_create(unsigned int heap_mask,
 					const char *name)
 {
+	/*
+	 * The assumption is that if there is a NULL device, the ion
+	 * driver has not yet probed.
+	 */
 	if (idev == NULL)
 		return ERR_PTR(-EPROBE_DEFER);
 
@@ -186,6 +190,10 @@ static int ion_no_pages_cache_ops(struct ion_client *client,
 	buff_phys = buff_phys_start;
 
 	if (!vaddr) {
+		/*
+		 * Split the vmalloc space into smaller regions in
+		 * order to clean and/or invalidate the cache.
+		 */
 		size_to_vmap = ((VMALLOC_END - VMALLOC_START)/8);
 		total_size = buf_length;
 
@@ -642,6 +650,11 @@ static struct ion_platform_data *msm_ion_parse_dt(struct platform_device *pdev)
 		}
 
 		pdata->heaps[idx].priv = &new_dev->dev;
+		/**
+		 * TODO: Replace this with of_get_address() when this patch
+		 * gets merged: http://
+		 * permalink.gmane.org/gmane.linux.drivers.devicetree/18614
+		*/
 		ret = of_property_read_u32(node, "reg", &val);
 		if (ret) {
 			pr_err("%s: Unable to find reg key\n", __func__);
@@ -724,6 +737,7 @@ int ion_heap_allow_heap_secure(enum ion_heap_type type)
 	return false;
 }
 
+/* fix up the cases where the ioctl direction bits are incorrect */
 static unsigned int msm_ion_ioctl_dir(unsigned int cmd)
 {
 	switch (cmd) {
@@ -916,12 +930,16 @@ static int msm_ion_probe(struct platform_device *pdev)
 
 	new_dev = ion_device_create(compat_msm_ion_ioctl);
 	if (IS_ERR_OR_NULL(new_dev)) {
+		/*
+		 * set this to the ERR to indicate to the clients
+		 * that Ion failed to probe.
+		 */
 		idev = new_dev;
 		err = PTR_ERR(new_dev);
 		goto freeheaps;
 	}
 
-	
+	/* create the heaps as specified in the board file */
 	for (i = 0; i < num_heaps; i++) {
 		struct ion_platform_heap *heap_data = &pdata->heaps[i];
 		msm_ion_allocate(heap_data);
@@ -949,6 +967,10 @@ static int msm_ion_probe(struct platform_device *pdev)
 		free_pdata(pdata);
 
 	platform_set_drvdata(pdev, new_dev);
+	/*
+	 * intentionally set this at the very end to allow probes to be deferred
+	 * completely until Ion is setup
+	 */
 	idev = new_dev;
 	return 0;
 

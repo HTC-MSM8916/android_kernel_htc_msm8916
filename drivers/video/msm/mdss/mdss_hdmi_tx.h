@@ -31,6 +31,7 @@ enum hdmi_tx_power_module_type {
 	HDMI_TX_MAX_PM
 };
 
+/* Data filled from device tree */
 struct hdmi_tx_platform_data {
 	bool primary;
 	bool cond_power_on;
@@ -98,4 +99,4 @@ struct hdmi_tx_ctrl {
 	void *feature_data[HDMI_TX_FEAT_MAX];
 };
 
-#endif 
+#endif /* __MDSS_HDMI_TX_H__ */

@@ -37,6 +37,19 @@ enum {
 struct device;
 struct module;
 
+/**
+ * struct subsys_desc - subsystem descriptor
+ * @name: name of subsystem
+ * @depends_on: subsystem this subsystem depends on to operate
+ * @dev: parent device
+ * @owner: module the descriptor belongs to
+ * @shutdown: Stop a subsystem
+ * @powerup: Start a subsystem
+ * @crash_shutdown: Shutdown a subsystem when the system crashes (can't sleep)
+ * @ramdump: Collect a ramdump of the subsystem
+ * @is_not_loadable: Indicate if subsystem firmware is not loadable via pil
+ * framework
+ */
 struct subsys_desc {
 	const char *name;
 	const char *depends_on;
@@ -58,6 +71,11 @@ struct subsys_desc {
 	int force_stop_gpio;
 };
 
+/**
+ * struct notif_data - additional notif information
+ * @crashed: indicates if subsystem has crashed
+ * @enable_ramdump: ramdumps disabled if set to 0
+ */
 struct notif_data {
 	bool crashed;
 	int enable_ramdump;
@@ -67,13 +85,11 @@ struct notif_data {
 
 #if defined(CONFIG_HTC_DEBUG_SSR)
 void subsys_set_restart_reason(struct subsys_device *dev, const char *reason);
-#endif 
 
-#if defined(CONFIG_HTC_FEATURES_SSR)
 extern void subsys_set_enable_ramdump(struct subsys_device *dev, int enable);
 extern void subsys_set_restart_level(struct subsys_device *dev, int level);
 extern struct subsys_device *find_subsys(const char *str);
-#endif
+#endif /* CONFIG_HTC_DEBUG_SSR */
 
 extern int subsys_get_restart_level(struct subsys_device *dev);
 extern int subsystem_restart_dev(struct subsys_device *dev);
@@ -98,9 +114,7 @@ static inline void subsys_set_restart_reason(struct subsys_device *dev, const ch
 {
        return;
 }
-#endif 
 
-#if defined(CONFIG_HTC_FEATURES_SSR)
 static inline void subsys_set_enable_ramdump(struct subsys_device *dev, int enable)
 {
 	return 0;
@@ -110,7 +124,7 @@ static inline void subsys_set_restart_level(struct subsys_device *dev, int level
 {
 	return 0;
 }
-#endif
+#endif /* CONFIG_HTC_DEBUG_SSR */
 
 static inline int subsys_get_restart_level(struct subsys_device *dev)
 {
@@ -156,6 +170,6 @@ static inline bool subsys_get_crash_status(struct subsys_device *dev)
 }
 static inline void notify_proxy_vote(struct device *device) { }
 static inline void notify_proxy_unvote(struct device *device) { }
-#endif 
+#endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
 
 #endif

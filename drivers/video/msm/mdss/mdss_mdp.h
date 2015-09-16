@@ -49,11 +49,12 @@
 #define MDP_MIN_VBP		4
 #define MAX_FREE_LIST_SIZE	12
 
-#define C3_ALPHA	3	
-#define C2_R_Cr		2	
-#define C1_B_Cb		1	
-#define C0_G_Y		0	
+#define C3_ALPHA	3	/* alpha */
+#define C2_R_Cr		2	/* R/Cr */
+#define C1_B_Cb		1	/* B/Cb */
+#define C0_G_Y		0	/* G/luma */
 
+/* wait for at most 2 vsync for lowest refresh rate (24hz) */
 #define KOFF_TIMEOUT msecs_to_jiffies(84)
 
 #define OVERFETCH_DISABLE_TOP		BIT(0)
@@ -164,15 +165,15 @@ struct mdss_mdp_ctl {
 	u32 dst_format;
 	bool is_secure;
 
-	bool traffic_shaper_enabled;
-	u32  traffic_shaper_mdp_clk;
-
 	u32 clk_rate;
 	int force_screen_state;
 	struct mdss_mdp_perf_params cur_perf;
 	struct mdss_mdp_perf_params new_perf;
 	u32 perf_transaction_status;
 	bool perf_release_ctl_bw;
+
+	bool traffic_shaper_enabled;
+	u32  traffic_shaper_mdp_clk;
 
 	struct mdss_data_type *mdata;
 	struct msm_fb_data_type *mfd;
@@ -238,11 +239,11 @@ struct mdss_mdp_format_params {
 	u8 chroma_sample;
 	u8 solid_fill;
 	u8 fetch_planes;
-	u8 unpack_align_msb;	
-	u8 unpack_tight;	
-	u8 unpack_count;	
+	u8 unpack_align_msb;	/* 0 to LSB, 1 to MSB */
+	u8 unpack_tight;	/* 0 for loose, 1 for tight */
+	u8 unpack_count;	/* 0 = 1 component, 1 = 2 component ... */
 	u8 bpp;
-	u8 alpha_enable;	
+	u8 alpha_enable;	/*  source has alpha */
 	u8 tile;
 	u8 bits[MAX_PLANES];
 	u8 element[MAX_PLANES];
@@ -456,6 +457,12 @@ struct mdss_overlay_private {
 	int retire_cnt;
 };
 
+/**
+ * enum mdss_screen_state - Screen states that MDP can be forced into
+ *
+ * @MDSS_SCREEN_DEFAULT:	Do not force MDP into any screen state.
+ * @MDSS_SCREEN_FORCE_BLANK:	Force MDP to generate blank color fill screen.
+ */
 enum mdss_screen_state {
 	MDSS_SCREEN_DEFAULT,
 	MDSS_SCREEN_FORCE_BLANK,
@@ -530,13 +537,6 @@ static inline int mdss_mdp_pipe_is_sw_reset_available(
 	}
 }
 
-static inline struct clk *mdss_mdp_get_clk(u32 clk_idx)
-{
-	if (clk_idx < MDSS_MAX_CLK)
-		return mdss_res->mdp_clk[clk_idx];
-	return NULL;
-}
-
 static inline int mdss_mdp_iommu_dyn_attach_supported(
 	struct mdss_data_type *mdata)
 {
@@ -546,6 +546,13 @@ static inline int mdss_mdp_iommu_dyn_attach_supported(
 static inline int mdss_mdp_line_buffer_width(void)
 {
 	return MAX_LINE_BUFFER_WIDTH;
+}
+
+static inline struct clk *mdss_mdp_get_clk(u32 clk_idx)
+{
+	if (clk_idx < MDSS_MAX_CLK)
+		return mdss_res->mdp_clk[clk_idx];
+	return NULL;
 }
 
 irqreturn_t mdss_mdp_isr(int irq, void *ptr);
@@ -581,10 +588,10 @@ int mdss_mdp_overlay_get_buf(struct msm_fb_data_type *mfd,
 			     int num_planes,
 			     u32 flags);
 int mdss_mdp_overlay_pipe_setup(struct msm_fb_data_type *mfd,
-				struct mdp_overlay *req, struct mdss_mdp_pipe **ppipe,
-				struct mdss_mdp_pipe *left_blend_pipe, bool is_single_layer);
+	struct mdp_overlay *req, struct mdss_mdp_pipe **ppipe,
+	struct mdss_mdp_pipe *left_blend_pipe, bool is_single_layer);
 void mdss_mdp_handoff_cleanup_pipes(struct msm_fb_data_type *mfd,
-					u32 type);
+							u32 type);
 int mdss_mdp_overlay_release(struct msm_fb_data_type *mfd, int ndx);
 int mdss_mdp_overlay_start(struct msm_fb_data_type *mfd);
 int mdss_mdp_video_addr_setup(struct mdss_data_type *mdata,
@@ -788,4 +795,4 @@ int mdss_mdp_footswitch_ctrl_idle_pc(int on, struct device *dev);
 				(mfd->mdp.private1))->wb)
 
 int  mdss_mdp_ctl_reset(struct mdss_mdp_ctl *ctl);
-#endif 
+#endif /* MDSS_MDP_H */

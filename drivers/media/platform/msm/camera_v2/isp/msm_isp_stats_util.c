@@ -90,6 +90,10 @@ void msm_isp_process_stats_irq(struct vfe_device *vfe_dev,
 		return;
 	ISP_DBG("%s: status: 0x%x\n", __func__, irq_status0);
 
+	/*
+	 * If any of composite mask is set, clear irq bits from mask,
+	 * they will be restored by comp mask
+	 */
 	if (stats_comp_mask) {
 		for (j = 0; j < num_stats_comp_mask; j++) {
 			stats_irq_mask &= ~atomic_read(
@@ -103,11 +107,11 @@ void msm_isp_process_stats_irq(struct vfe_device *vfe_dev,
 		if (!stats_comp_mask) {
 			stats_irq_mask &= ~atomic_stats_mask;
 		} else {
-			
+			/* restore irq bits from composite mask */
 			if (stats_comp_mask & (1 << j))
 				stats_irq_mask |= atomic_stats_mask;
 		}
-		
+		/* if no irq bits set from this composite mask continue*/
 		if (!stats_irq_mask)
 			continue;
 		memset(&buf_event, 0, sizeof(struct msm_isp_event_data));

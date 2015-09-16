@@ -86,7 +86,7 @@ struct mdp_pcc_cfg_data32 {
 };
 
 struct mdp_csc_cfg32 {
-	
+	/* flags for enable CSC, toggling RGB,YUV input/output */
 	uint32_t flags;
 	uint32_t csc_mv[9];
 	uint32_t csc_pre_bv[3];
@@ -114,7 +114,7 @@ struct mdp_pa_mem_col_cfg32 {
 };
 
 struct mdp_pa_v2_data32 {
-	
+	/* Mask bits for PA features */
 	uint32_t flags;
 	uint32_t global_hue_adj;
 	uint32_t global_sat_adj;
@@ -272,6 +272,7 @@ struct mdss_ad_cfg32 {
 	uint32_t bl_ctrl_mode;
 };
 
+/* ops uses standard MDP_PP_* flags */
 struct mdss_ad_init_cfg32 {
 	uint32_t ops;
 	union {
@@ -348,8 +349,8 @@ struct mdp_overlay32 {
 	struct msmfb_img src;
 	struct mdp_rect src_rect;
 	struct mdp_rect dst_rect;
-	uint32_t z_order;	
-	uint32_t is_fg;	
+	uint32_t z_order;	/* stage number */
+	uint32_t is_fg;	/* control alpha & transp */
 	uint32_t alpha;
 	uint32_t blend_op;
 	uint32_t transp_mask;

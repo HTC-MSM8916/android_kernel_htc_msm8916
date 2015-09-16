@@ -54,6 +54,7 @@ void diag_reset_smd_data(int queue);
 int diag_apps_responds(void);
 void diag_update_pkt_buffer(unsigned char *buf, int type);
 int diag_process_stm_cmd(unsigned char *buf, unsigned char *dest_buf);
+/* State for diag forwarding */
 #ifdef CONFIG_DIAG_OVER_USB
 int diagfwd_connect(void);
 int diagfwd_disconnect(void);

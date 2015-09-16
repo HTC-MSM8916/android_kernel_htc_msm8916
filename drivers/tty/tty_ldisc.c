@@ -278,6 +278,8 @@ EXPORT_SYMBOL_GPL(tty_ldisc_ref_wait);
  *	Dereference the line discipline for the terminal and take a
  *	reference to it. If the line discipline is in flux then
  *	return NULL. Can be called from IRQ and timer functions.
+ *
+ *	Locking: called functions take tty_ldisc_lock
  */
 
 struct tty_ldisc *tty_ldisc_ref(struct tty_struct *tty)
@@ -299,6 +301,8 @@ EXPORT_SYMBOL_GPL(tty_ldisc_ref);
  *
  *	Undoes the effect of tty_ldisc_ref or tty_ldisc_ref_wait. May
  *	be called in IRQ context.
+ *
+ *	Locking: takes tty_ldisc_lock
  */
 
 void tty_ldisc_deref(struct tty_ldisc *ld)
@@ -512,6 +516,8 @@ static void tty_ldisc_restore(struct tty_struct *tty, struct tty_ldisc *old)
  *	context. The ldisc change logic has to protect itself against any
  *	overlapping ldisc change (including on the other end of pty pairs),
  *	the close of one side of a tty/pty pair, and eventually hangup.
+ *
+ *	Locking: takes tty_ldisc_lock, termios_mutex
  */
 
 int tty_set_ldisc(struct tty_struct *tty, int ldisc)
@@ -663,8 +669,14 @@ void tty_ldisc_hangup(struct tty_struct *tty)
 
 	tty_ldisc_debug(tty, "closing ldisc: %p\n", tty->ldisc);
 
+	/*
+	 * FIXME! What are the locking issues here? This may me overdoing
+	 * things... This question is especially important now that we've
+	 * removed the irqlock.
+	 */
 	ld = tty_ldisc_ref(tty);
 	if (ld != NULL) {
+		/* We may have no line discipline at this point */
 		if (ld->ops->flush_buffer)
 			ld->ops->flush_buffer(tty);
 		tty_driver_flush_buffer(tty);
@@ -675,7 +687,10 @@ void tty_ldisc_hangup(struct tty_struct *tty)
 			ld->ops->hangup(tty);
 		tty_ldisc_deref(ld);
 	}
-
+	/*
+	 * FIXME: Once we trust the LDISC code better we can wait here for
+	 * ldisc completion and fix the driver call race
+	 */
 	wake_up_interruptible_poll(&tty->write_wait, POLLOUT);
 	wake_up_interruptible_poll(&tty->read_wait, POLLIN);
 
@@ -781,7 +796,7 @@ void tty_ldisc_release(struct tty_struct *tty, struct tty_struct *o_tty)
 
 	tty_ldisc_lock_pair(tty, o_tty);
 	tty_lock_pair(tty, o_tty);
-
+	/* This will need doing differently if we need to lock */
 	tty_ldisc_kill(tty);
 	if (o_tty)
 		tty_ldisc_kill(o_tty);

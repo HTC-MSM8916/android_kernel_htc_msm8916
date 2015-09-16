@@ -40,13 +40,13 @@ static const uint8_t the_report_descriptor[] = {
 static struct usb_interface_descriptor charger_interface_desc = {
 	.bLength		= sizeof(charger_interface_desc),
 	.bDescriptorType	= USB_DT_INTERFACE,
-	
+	/* .bInterfaceNumber	= DYNAMIC */
 	.bAlternateSetting	= 0,
 	.bNumEndpoints		= 1,
 	.bInterfaceClass	= USB_CLASS_HID,
 	.bInterfaceSubClass	= 0,
 	.bInterfaceProtocol	= 0,
-	
+	/* .iInterface		= DYNAMIC */
 };
 
 static struct hid_descriptor charger_hid_desc = {
@@ -59,6 +59,7 @@ static struct hid_descriptor charger_hid_desc = {
 	.desc[0].wDescriptorLength = sizeof(the_report_descriptor),
 };
 
+/* Super-Speed Support */
 
 static struct usb_endpoint_descriptor charger_ss_in_ep_desc = {
 	.bLength		= USB_DT_ENDPOINT_SIZE,
@@ -76,6 +77,7 @@ static struct usb_descriptor_header *charger_ss_descriptors[] = {
 	NULL,
 };
 
+/* High-Speed Support */
 static struct usb_endpoint_descriptor charger_hs_in_ep_desc = {
 	.bLength		= USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType	= USB_DT_ENDPOINT,
@@ -92,6 +94,7 @@ static struct usb_descriptor_header *charger_hs_descriptors[] = {
 	NULL,
 };
 
+/* Full-Speed Support */
 
 static struct usb_endpoint_descriptor charger_fs_in_ep_desc = {
 	.bLength		= USB_DT_ENDPOINT_SIZE,
@@ -109,16 +112,17 @@ static struct usb_descriptor_header *charger_fs_descriptors[] = {
 	NULL,
 };
 
+/*       Strings          */
 
 #define CT_FUNC_HID_IDX	0
 
 static struct usb_string ct_func_string_defs[] = {
 	[CT_FUNC_HID_IDX].s	= "HID Interface",
-	{},			
+	{},			/* end of list */
 };
 
 static struct usb_gadget_strings ct_func_string_table = {
-	.language	= 0x0409,	
+	.language	= 0x0409,	/* en-US */
 	.strings	= ct_func_string_defs,
 };
 
@@ -156,7 +160,7 @@ static int hid_setup(struct usb_function *f,
 		  | HID_REQ_GET_REPORT):
 		VDBG(cdev, "get_report\n");
 
-		
+		/* send an empty report */
 		length = min_t(unsigned, length,
 				charger_hid_desc.desc[0].wDescriptorLength);
 		memset(req->buf, 0x0, length);
@@ -235,7 +239,7 @@ static int charger_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	VDBG(cdev, "charger_set_alt intf:%d alt:%d\n", intf, alt);
 
 	if (charger->in_ep != NULL) {
-		
+		/* restart endpoint */
 		if (charger->in_ep->driver_data != NULL)
 			usb_ep_disable(charger->in_ep);
 
@@ -265,22 +269,22 @@ static int  charger_bind(struct usb_configuration *c, struct usb_function *f)
 	struct f_charger		*charger = func_to_charger(f);
 	int			status;
 
-	
+	/* allocate instance-specific interface IDs, and patch descriptors */
 	status = usb_interface_id(c, f);
 	if (status < 0)
 		goto fail;
 
 	charger_interface_desc.bInterfaceNumber = status;
 
-	
+	/* allocate instance-specific endpoints */
 	status = -ENODEV;
 	ep = usb_ep_autoconfig(c->cdev->gadget, &charger_fs_in_ep_desc);
 	if (!ep)
 		goto fail;
-	ep->driver_data = c->cdev;	
+	ep->driver_data = c->cdev;	/* claim */
 	charger->in_ep = ep;
 
-	
+	/* copy descriptors */
 	f->fs_descriptors = usb_copy_descriptors(charger_fs_descriptors);
 	if (!f->fs_descriptors)
 		goto fail;
@@ -324,10 +328,10 @@ static void charger_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_charger *charger = func_to_charger(f);
 
-	
+	/* disable/free request and end point */
 	usb_ep_disable(charger->in_ep);
 
-	
+	/* free descriptors copies */
 	if (gadget_is_superspeed(c->cdev->gadget))
 		usb_free_descriptors(f->ss_descriptors);
 	if (gadget_is_dualspeed(c->cdev->gadget))
@@ -343,7 +347,7 @@ static int  charger_bind_config(struct usb_configuration *c)
 	struct f_charger *charger;
 	int status;
 
-	
+	/* allocate and initialize one new instance */
 	charger = kzalloc(sizeof(*charger), GFP_KERNEL);
 	if (!charger)
 		return -ENOMEM;

@@ -249,6 +249,7 @@ TRACE_EVENT(mdp_trace_counter,
 			__get_str(counter_name), __entry->value)
 );
 
-#endif 
+#endif /* if !defined(TRACE_MDSS_MDP_H) || defined(TRACE_HEADER_MULTI_READ) */
 
+/* This part must be outside protection */
 #include <trace/define_trace.h>

@@ -49,6 +49,9 @@
 #define ONDEMAND_REGULATOR true
 #define STATIC_REGULATOR (!ONDEMAND_REGULATOR)
 
+/* Number of return values needs to be checked for each
+ * registration of Slimbus of I2C bus for each codec
+ */
 #define NUM_WCD9XXX_REG_RET	9
 
 struct wcd9xxx_i2c {
@@ -74,7 +77,7 @@ static int extcodec_get_pinctrl(struct device *dev)
 		return -EINVAL;
 	}
 	pinctrl_info1.pinctrl = pinctrl;
-	
+	/* get all the states handles from Device Tree*/
 	pinctrl_info1.extncodec_sus = pinctrl_lookup_state(pinctrl, "suspend");
 	if (IS_ERR(pinctrl_info1.extncodec_sus)) {
 		pr_err("%s: Unable to get pinctrl disable state handle\n",
@@ -292,6 +295,9 @@ static int wcd9xxx_slim_read_device(struct wcd9xxx *wcd9xxx, unsigned short reg,
 
 	return ret;
 }
+/* Interface specifies whether the write is to the interface or general
+ * registers.
+ */
 static int wcd9xxx_slim_write_device(struct wcd9xxx *wcd9xxx,
 		unsigned short reg, int bytes, void *src, bool interface)
 {
@@ -367,7 +373,7 @@ static const struct wcd9xxx_codec_type wcd9xxx_codecs[] = {
 		WCD9XXX_SLIM_SLAVE_ADDR_TYPE_TABLA, 0x03
 	},
 	{
-		
+		/* Siter version 1 has same major chip id with Tabla */
 		TABLA_MAJOR, cpu_to_le16(0x0), sitar_devs,
 		ARRAY_SIZE(sitar_devs), SITAR_NUM_IRQS, -1,
 		WCD9XXX_SLIM_SLAVE_ADDR_TYPE_TABLA, 0x01
@@ -423,7 +429,7 @@ static void wcd9xxx_bring_up(struct wcd9xxx *wcd9xxx)
 	if (cdc_var == WCD9330) {
 		__wcd9xxx_reg_write(wcd9xxx, WCD9330_A_LEAKAGE_CTL, 0x4);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9330_A_CDC_CTL, 0);
-		
+		/* wait for 5ms after codec reset for it to complete */
 		usleep_range(5000, 5100);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9330_A_CDC_CTL, 0x1);
 		__wcd9xxx_reg_write(wcd9xxx, WCD9330_A_LEAKAGE_CTL, 0x3);
@@ -469,7 +475,7 @@ static int wcd9xxx_reset(struct wcd9xxx *wcd9xxx)
 	}
 	if (wcd9xxx->reset_gpio) {
 		if (wcd9xxx->use_pinctrl) {
-			
+			/* Reset the CDC PDM TLMM pins to a default state */
 			ret = pinctrl_select_state(pinctrl_info1.pinctrl,
 				pinctrl_info1.extncodec_act);
 			if (ret != 0) {
@@ -584,6 +590,10 @@ static int wcd9xxx_num_irq_regs(const struct wcd9xxx *wcd9xxx)
 		((wcd9xxx->codec_type->num_irqs % 8) ? 1 : 0);
 }
 
+/*
+ * Interrupt table for v1 corresponds to newer version
+ * codecs (wcd9304 and wcd9310)
+ */
 static const struct intr_data intr_tbl_v1[] = {
 	{WCD9XXX_IRQ_SLIMBUS, false},
 	{WCD9XXX_IRQ_MBHC_INSERTION, true},
@@ -611,6 +621,10 @@ static const struct intr_data intr_tbl_v1[] = {
 	{WCD9XXX_IRQ_RESERVED_1, false},
 };
 
+/*
+ * Interrupt table for v2 corresponds to newer version
+ * codecs (wcd9320 and wcd9306)
+ */
 static const struct intr_data intr_tbl_v2[] = {
 	{WCD9XXX_IRQ_SLIMBUS, false},
 	{WCD9XXX_IRQ_MBHC_INSERTION, true},
@@ -648,6 +662,10 @@ static const struct intr_data intr_tbl_v2[] = {
 	{WCD9XXX_IRQ_RESERVED_2, false},
 };
 
+/*
+ * Interrupt table for v3 corresponds to newer version
+ * codecs (wcd9330)
+ */
 static const struct intr_data intr_tbl_v3[] = {
 	{WCD9XXX_IRQ_SLIMBUS, false},
 	{WCD9XXX_IRQ_MBHC_INSERTION, true},
@@ -836,7 +854,7 @@ static ssize_t codec_debug_write(struct file *filp,
 	lbuf[cnt] = '\0';
 
 	if (!strncmp(access_str, "poke", 6)) {
-		
+		/* write */
 		rc = get_parameters(lbuf, param, 2);
 		if ((param[0] <= 0x3FF) && (param[1] <= 0xFF) &&
 			(rc == 0))
@@ -845,7 +863,7 @@ static ssize_t codec_debug_write(struct file *filp,
 		else
 			rc = -EINVAL;
 	} else if (!strncmp(access_str, "peek", 6)) {
-		
+		/* read */
 		rc = get_parameters(lbuf, param, 1);
 		if ((param[0] <= 0x3FF) && (rc == 0))
 			read_data = wcd9xxx_interface_reg_read(debugCodec,
@@ -1047,7 +1065,7 @@ int wcd9xxx_i2c_write_device(u16 reg, u8 *value,
 	data[1] = *value;
 	msg->buf = data;
 	ret = i2c_transfer(wcd9xxx->client->adapter, wcd9xxx->xfer_msg, 1);
-	
+	/* Try again if the write fails */
 	if (ret != 1) {
 		ret = i2c_transfer(wcd9xxx->client->adapter,
 						wcd9xxx->xfer_msg, 1);
@@ -1091,7 +1109,7 @@ int wcd9xxx_i2c_read_device(unsigned short reg,
 		ret = i2c_transfer(wcd9xxx->client->adapter,
 				wcd9xxx->xfer_msg, 2);
 
-		
+		/* Try again if read fails first time */
 		if (ret != 2) {
 			ret = i2c_transfer(wcd9xxx->client->adapter,
 							wcd9xxx->xfer_msg, 2);
@@ -1378,6 +1396,10 @@ static int wcd9xxx_dt_parse_micbias_info(struct device *dev,
 	wcd9xxx_read_of_property_u32(dev, "qcom,cdc-micbias-cfilt3-mv",
 				&micbias->cfilt3_mv);
 
+	/* Read micbias values for codec. Does not matter even if a few
+	 * micbias values are not defined in the Device Tree. Codec will
+	 * anyway not use those values
+	 */
 	if (!(wcd9xxx_read_of_property_u32(dev, "qcom,cdc-micbias1-cfilt-sel",
 				&prop_val)))
 		micbias->bias1_cfilt_sel = (u8)prop_val;
@@ -1394,7 +1416,7 @@ static int wcd9xxx_dt_parse_micbias_info(struct device *dev,
 				&prop_val)))
 		micbias->bias4_cfilt_sel = (u8)prop_val;
 
-	
+	/* micbias external cap */
 	micbias->bias1_cap_mode =
 	    (of_property_read_bool(dev->of_node, "qcom,cdc-micbias1-ext-cap") ?
 	     MICBIAS_EXT_BYP_CAP : MICBIAS_NO_EXT_BYP_CAP);
@@ -1525,12 +1547,12 @@ static struct wcd9xxx_pdata *wcd9xxx_populate_dt_pdata(struct device *dev)
 		goto err;
 	}
 
-	
+	/* On-demand supply list is an optional property */
 	ond_cnt = of_property_count_strings(dev->of_node, ond_prop_name);
 	if (IS_ERR_VALUE(ond_cnt))
 		ond_cnt = 0;
 
-	
+	/* cp-supplies list is an optional property */
 	cp_supplies_cnt = of_property_count_strings(dev->of_node,
 							cp_supplies_name);
 	if (IS_ERR_VALUE(cp_supplies_cnt))
@@ -1651,7 +1673,7 @@ static int wcd9xxx_slim_get_laddr(struct slim_device *sb,
 		ret = slim_get_logical_addr(sb, e_addr, e_len, laddr);
 		if (!ret)
 			break;
-		
+		/* Give SLIMBUS time to report present and be ready. */
 		usleep_range(1000, 1100);
 		pr_debug_ratelimited("%s: retyring get logical addr\n",
 				     __func__);

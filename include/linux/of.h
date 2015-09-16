@@ -50,13 +50,13 @@ struct device_node {
 	const char *full_name;
 
 	struct	property *properties;
-	struct	property *deadprops;	
+	struct	property *deadprops;	/* removed properties */
 	struct	device_node *parent;
 	struct	device_node *child;
 	struct	device_node *sibling;
-	struct	device_node *next;	
-	struct	device_node *allnext;	
-	struct	proc_dir_entry *pde;	
+	struct	device_node *next;	/* next device of same type */
+	struct	device_node *allnext;	/* next in list of all nodes */
+	struct	proc_dir_entry *pde;	/* this node's proc directory */
 	struct	kref kref;
 	unsigned long _flags;
 	void	*data;
@@ -77,16 +77,18 @@ struct of_phandle_args {
 #ifdef CONFIG_OF_DYNAMIC
 extern struct device_node *of_node_get(struct device_node *node);
 extern void of_node_put(struct device_node *node);
-#else 
+#else /* CONFIG_OF_DYNAMIC */
+/* Dummy ref counting routines - to be implemented later */
 static inline struct device_node *of_node_get(struct device_node *node)
 {
 	return node;
 }
 static inline void of_node_put(struct device_node *node) { }
-#endif 
+#endif /* !CONFIG_OF_DYNAMIC */
 
 #ifdef CONFIG_OF
 
+/* Pointer for first entry in chain of all nodes. */
 extern struct device_node *of_allnodes;
 extern struct device_node *of_chosen;
 extern struct device_node *of_aliases;
@@ -114,7 +116,11 @@ static inline void of_node_set_flag(struct device_node *n, unsigned long flag)
 
 extern struct device_node *of_find_all_nodes(struct device_node *prev);
 
+/*
+ * OF address retrieval & translation
+ */
 
+/* Helper to read a big number; size is in cells (not bytes) */
 static inline u64 of_read_number(const __be32 *cell, int size)
 {
 	u64 r = 0;
@@ -123,9 +129,10 @@ static inline u64 of_read_number(const __be32 *cell, int size)
 	return r;
 }
 
+/* Like of_read_number, but we want an unsigned long result */
 static inline unsigned long of_read_ulong(const __be32 *cell, int size)
 {
-	
+	/* toss away upper bits if unsigned long is smaller than u64 */
 	return of_read_number(cell, size);
 }
 
@@ -133,19 +140,22 @@ static inline unsigned long of_read_ulong(const __be32 *cell, int size)
 #include <asm/prom.h>
 #endif
 
+/* Default #address and #size cells.  Allow arch asm/prom.h to override */
 #if !defined(OF_ROOT_NODE_ADDR_CELLS_DEFAULT)
 #define OF_ROOT_NODE_ADDR_CELLS_DEFAULT 1
 #define OF_ROOT_NODE_SIZE_CELLS_DEFAULT 1
 #endif
 
+/* Default string compare functions, Allow arch asm/prom.h to override */
 #if !defined(of_compat_cmp)
 #define of_compat_cmp(s1, s2, l)	strcasecmp((s1), (s2))
 #define of_prop_cmp(s1, s2)		strcmp((s1), (s2))
 #define of_node_cmp(s1, s2)		strcasecmp((s1), (s2))
 #endif
 
-#define OF_DYNAMIC	1 
-#define OF_DETACHED	2 
+/* flag descriptions */
+#define OF_DYNAMIC	1 /* node and properties were allocated via kmalloc */
+#define OF_DETACHED	2 /* node has been detached from the device tree */
 
 #define OF_IS_DYNAMIC(x) test_bit(OF_DYNAMIC, &x->_flags)
 #define OF_MARK_DYNAMIC(x) set_bit(OF_DYNAMIC, &x->_flags)
@@ -287,6 +297,7 @@ extern int of_add_property(struct device_node *np, struct property *prop);
 extern int of_remove_property(struct device_node *np, struct property *prop);
 extern int of_update_property(struct device_node *np, struct property *newprop);
 
+/* For updating the device tree at runtime */
 #define OF_RECONFIG_ATTACH_NODE		0x0001
 #define OF_RECONFIG_DETACH_NODE		0x0002
 #define OF_RECONFIG_ADD_PROPERTY	0x0003
@@ -307,6 +318,14 @@ extern int of_detach_node(struct device_node *);
 
 #define of_match_ptr(_ptr)	(_ptr)
 
+/*
+ * struct property *prop;
+ * const __be32 *p;
+ * u32 u;
+ *
+ * of_property_for_each_u32(np, "propname", prop, p, u)
+ *         printk("U32 value: %x\n", u);
+ */
 const __be32 *of_prop_next_u32(struct property *prop, const __be32 *cur,
 			       u32 *pu);
 #define of_property_for_each_u32(np, propname, prop, p, u)	\
@@ -315,6 +334,13 @@ const __be32 *of_prop_next_u32(struct property *prop, const __be32 *cur,
 		p;						\
 		p = of_prop_next_u32(prop, p, &u))
 
+/*
+ * struct property *prop;
+ * const char *s;
+ *
+ * of_property_for_each_string(np, "propname", prop, s)
+ *         printk("String value: %s\n", s);
+ */
 const char *of_prop_next_string(struct property *prop, const char *cur);
 #define of_property_for_each_string(np, propname, prop, s)	\
 	for (prop = of_find_property(np, propname, NULL),	\
@@ -322,7 +348,7 @@ const char *of_prop_next_string(struct property *prop, const char *cur);
 		s;						\
 		s = of_prop_next_string(prop, s))
 
-#else 
+#else /* CONFIG_OF */
 
 static inline const char* of_node_full_name(struct device_node *np)
 {
@@ -496,7 +522,7 @@ static inline int of_machine_is_compatible(const char *compat)
 	while (0)
 #define of_property_for_each_string(np, propname, prop, s) \
 	while (0)
-#endif 
+#endif /* CONFIG_OF */
 
 #ifndef of_node_to_nid
 static inline int of_node_to_nid(struct device_node *np)
@@ -507,6 +533,14 @@ static inline int of_node_to_nid(struct device_node *np)
 #define of_node_to_nid of_node_to_nid
 #endif
 
+/**
+ * of_property_read_bool - Findfrom a property
+ * @np:		device node from which the property value is to be read.
+ * @propname:	name of the property to be searched.
+ *
+ * Search for a property in a device node.
+ * Returns true if the property exist false otherwise.
+ */
 static inline bool of_property_read_bool(const struct device_node *np,
 					 const char *propname)
 {
@@ -546,4 +580,4 @@ extern void proc_device_tree_update_prop(struct proc_dir_entry *pde,
 					 struct property *oldprop);
 #endif
 
-#endif 
+#endif /* _LINUX_OF_H */
