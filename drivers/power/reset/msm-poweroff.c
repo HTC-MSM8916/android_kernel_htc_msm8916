@@ -54,12 +54,23 @@ static int restart_mode;
 static bool scm_pmic_arbiter_disable_supported;
 /* Download mode master kill-switch */
 static void __iomem *msm_ps_hold;
+static int in_panic;
+
+static int panic_prep_restart(struct notifier_block *this,
+                             unsigned long event, void *ptr)
+{
+       in_panic = 1;
+       return NOTIFY_DONE;
+}
+
+static struct notifier_block panic_blk = {
+       .notifier_call  = panic_prep_restart,
+};
 
 #ifdef CONFIG_MSM_DLOAD_MODE
 #define EDL_MODE_PROP "qcom,msm-imem-emergency_download_mode"
 #define DL_MODE_PROP "qcom,msm-imem-download_mode"
 
-static int in_panic;
 static void *dload_mode_addr;
 static bool dload_mode_enabled;
 static void *emergency_dload_mode_addr;
@@ -69,16 +80,6 @@ static int dload_set(const char *val, struct kernel_param *kp);
 static int download_mode = 1;
 module_param_call(download_mode, dload_set, param_get_int,
 			&download_mode, 0644);
-static int panic_prep_restart(struct notifier_block *this,
-			      unsigned long event, void *ptr)
-{
-	in_panic = 1;
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block panic_blk = {
-	.notifier_call	= panic_prep_restart,
-};
 
 static void set_dload_mode(int on)
 {
