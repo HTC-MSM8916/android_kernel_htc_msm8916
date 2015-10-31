@@ -84,3 +84,8 @@ obj-$(CONFIG_TOUCHSCREEN_HIMAX)         += himax_852xD.o
 obj-$(CONFIG_TOUCHSCREEN_GT9XX)		+= gt9xx/
 obj-$(CONFIG_TOUCHSCREEN_PROXIMITY)	+= touch_psensor.o
 obj-$(CONFIG_TOUCHSCREEN_MSG2133)	+= msg2133.o
+
+# Make sure the focaltech touchscreen lib is included if the output
+# directory is different than the source directory
+extlibs :=$(PWD)/drivers/input/touchscreen/focal_mcap_test_lib.a
+ldflags-$(CONFIG_TOUCHSCREEN_FT5X36) +=--whole-archive $(extlibs) --no-whole-archive
