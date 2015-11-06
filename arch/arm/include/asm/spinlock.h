@@ -68,7 +68,9 @@ static inline void dsb_sev(void)
 #if __LINUX_ARM_ARCH__ >= 7
 	__asm__ __volatile__ (
 		"dsb\n"
+#ifndef CONFIG_HTC_WFE_DISABLE
 		SEV
+#endif
 	);
 #else
 	__asm__ __volatile__ (
@@ -125,7 +127,9 @@ static inline void arch_spin_lock(arch_spinlock_t *lock)
 			: "cc");
 			isb();
 		}
+#ifndef CONFIG_HTC_WFE_DISABLE
 		wfe();
+#endif
 		if (msm_krait_need_wfe_fixup) {
 			tmp |= 0x10000;
 			__asm__ __volatile__(
@@ -200,7 +204,9 @@ static inline void arch_write_lock(arch_rwlock_t *rw)
 "1:	ldrex	%0, [%2]\n"
 "	teq	%0, #0\n"
 "	beq	2f\n"
+#ifndef CONFIG_HTC_WFE_DISABLE
 	WFE_SAFE("%1", "%0")
+#endif
 "2:\n"
 "	strexeq	%0, %3, [%2]\n"
 "	teq	%0, #0\n"
@@ -269,7 +275,9 @@ static inline void arch_read_lock(arch_rwlock_t *rw)
 "	adds	%0, %0, #1\n"
 "	strexpl	%1, %0, [%3]\n"
 "	bpl	2f\n"
+#ifndef CONFIG_HTC_WFE_DISABLE
 	WFE_SAFE("%2", "%0")
+#endif
 "2:\n"
 "	rsbpls	%0, %1, #0\n"
 "	bmi	1b"

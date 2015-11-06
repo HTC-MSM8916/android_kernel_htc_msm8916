@@ -1099,11 +1099,89 @@ config PERFLOCK
 
 endif
 
+config MACH_A11_UL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A11_UL"
+        help
+          Support for HTC MSM8916 A11_UL
+
+config MACH_A21_DCGL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A21_DCGL"
+        help
+          Support for HTC MSM8916 A21_DCGL
+
+config MACH_A21_UL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A21_UL"
+        help
+          Support for HTC MSM8916 A21_UL
+
+config MACH_A21_DUGL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A21_DUGL"
+        help
+          Support for HTC MSM8916 A21_DUGL
+
+config MACH_A21_DTGL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A21_DTGL"
+        help
+          Support for HTC MSM8916 A21_DTGL
+
+config MACH_A21_DTUL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A21_DTUL"
+        help
+          Support for HTC MSM8916 A21_DTUL
+
 config MACH_A31_UL
         depends on ARCH_MSM8916
         bool "MSM8916 A31_UL"
         help
           Support for HTC MSM8916 A31_UL
+
+config MACH_A31_DUGL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A31_DUGL"
+        help
+          Support for HTC MSM8916 A31_DUGL
+
+config MACH_A31_DTGL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A31_DTGL"
+        help
+          Support for HTC MSM8916 A31_DTGL
+
+config MACH_A31_DTUL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A31_DTUL"
+        help
+          Support for HTC MSM8916 A31_DTUL
+
+config MACH_A50_UL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A50_UL"
+        help
+          Support for HTC MSM8916 A50_UL
+
+config MACH_A50_DUGL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A50_DUGL"
+        help
+          Support for HTC MSM8916 A50_DUGL
+
+config MACH_A50_DTGL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A50_DTGL"
+        help
+          Support for HTC MSM8916 A50_DTGL
+
+config MACH_A50_DTUL
+        depends on ARCH_MSM8916
+        bool "MSM8916 A50_DTUL"
+        help
+          Support for HTC MSM8916 A50_DTUL
 
 config HTC_BATT_CORE
    depends on POWER_SUPPLY

@@ -183,7 +183,7 @@ static void msm8916_add_usb_devices(void)
 	if ((!(get_radio_flag() & BIT(17))) && (mode == MFG_MODE_MFGKERNEL || mode == MFG_MODE_MFGKERNEL_DIAG58)) {
 		android_usb_pdata.fserial_init_string = "tty,tty:autobot,tty:serial,tty:autobot,tty:acm";
 	}
-#ifdef CONFIG_MACH_DUMMY
+#ifdef CONFIG_MACH_A11_UL
 	android_usb_pdata.product_id = 0x05fd;
 #elif defined(CONFIG_MACH_DUMMY)
 	android_usb_pdata.product_id = 0x0652;

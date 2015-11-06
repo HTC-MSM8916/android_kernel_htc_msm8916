@@ -12,10 +12,12 @@
 #define PANEL_ID_A31_SUCCESS_R61318A1 2
 #define PANEL_ID_A31_BOOYI_OTM1284A 3
 
+/* HTC: dsi_power_data overwrite the role of dsi_drv_cm_data
+   in mdss_dsi_ctrl_pdata structure */
 struct dsi_power_data {
-	uint32_t sysrev;         
-	struct regulator *vdda;  
-	struct regulator *vdd;    
+	uint32_t sysrev;         /* system revision info */
+	struct regulator *vdda;  /* mipi analog 1.2v */
+	struct regulator *vdd;    /* lcm 2.85v */
 };
 
 #ifdef MODULE
@@ -52,7 +54,7 @@ static int htc_a31_regulator_init(struct platform_device *pdev)
 
 	ctrl_pdata->dsi_pwrctrl_data = pwrdata;
 
-	
+	/* MIPI Analog 1.2V */
 	pwrdata->vdda = devm_regulator_get(&pdev->dev, "vdda");
 	if (IS_ERR(pwrdata->vdda)) {
 		pr_err("%s: could not get vdda reg, rc=%ld\n",
@@ -60,7 +62,7 @@ static int htc_a31_regulator_init(struct platform_device *pdev)
 		return PTR_ERR(pwrdata->vdda);
 	}
 
-	
+	/* LCM 2.85V */
 	pwrdata->vdd = devm_regulator_get(&pdev->dev, "vdd");
 	if (IS_ERR(pwrdata->vdd)) {
 		pr_err("%s: could not get vdd reg, rc=%ld\n",
@@ -89,7 +91,9 @@ static int htc_a31_regulator_init(struct platform_device *pdev)
 
 static int htc_a31_regulator_deinit(struct platform_device *pdev)
 {
-	
+	/* devm_regulator() will automatically free regulators
+	   while dev detach. */
+	/* nothing */
 	return 0;
 }
 

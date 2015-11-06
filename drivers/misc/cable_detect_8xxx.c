@@ -461,6 +461,10 @@ static void cable_detect_handler(struct work_struct *w)
 		break;
 #endif
 	case DOCK_STATE_USB_HOST:
+		CABLE_INFO("USB Host inserted\n");
+		send_usb_host_connect_notify(1);
+		pInfo->accessory_type = DOCK_STATE_USB_HOST;
+		switch_set_state(&dock_switch, DOCK_STATE_USB_HOST);
 		break;
 	case DOCK_STATE_DMB:
 		CABLE_INFO("DMB inserted\n");

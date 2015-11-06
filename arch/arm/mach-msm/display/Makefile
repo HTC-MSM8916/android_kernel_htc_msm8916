@@ -1,4 +1,14 @@
+obj-$(CONFIG_MACH_A11_UL) += htc_a11-panel.o
+obj-$(CONFIG_MACH_A21_DCGL) += htc_a21-panel.o
+obj-$(CONFIG_MACH_A21_UL) += htc_a21-panel.o
+obj-$(CONFIG_MACH_A21_DUGL) += htc_a21-panel.o
+obj-$(CONFIG_MACH_A21_DTGL) += htc_a21-panel.o
+obj-$(CONFIG_MACH_A21_DTUL) += htc_a21-panel.o
 obj-$(CONFIG_MACH_A31_UL) += htc_a31-panel.o
 obj-$(CONFIG_MACH_A31_DUGL) += htc_a31-panel.o
 obj-$(CONFIG_MACH_A31_DTGL) += htc_a31-panel.o
 obj-$(CONFIG_MACH_A31_DTUL) += htc_a31-panel.o
+obj-$(CONFIG_MACH_A50_UL) += htc_a50-panel.o
+obj-$(CONFIG_MACH_A50_DUGL) += htc_a50-panel.o
+obj-$(CONFIG_MACH_A50_DTGL) += htc_a50-panel.o
+obj-$(CONFIG_MACH_A50_DTUL) += htc_a50-panel.o

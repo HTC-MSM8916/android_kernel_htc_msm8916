@@ -101,3 +101,9 @@ config HTC_INIT_COREDUMP
         help
           Enable COREDUMP for INIT.
 
+config HTC_WFE_DISABLE
+	default n
+	bool "Disable WFE instruction to avoid CPU issue"
+	help
+	  Disable ARM wfe instruction which might cause CPU hang and trigger
+	  watchdog reset.
