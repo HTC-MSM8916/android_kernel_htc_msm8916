@@ -314,7 +314,6 @@ static void oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 	sprint_symbol(sym_lr, regs->ARM_lr);
 #endif
 
-
 	if (in_interrupt())
 #if defined(CONFIG_HTC_DEBUG_KP)
 		panic("%.*s PC:%s LR:%s", TASK_COMM_LEN, thread->task->comm, sym_pc, sym_lr);

@@ -109,7 +109,8 @@ enum mdss_intf_events {
 	MDSS_EVENT_FB_REGISTERED,
 	MDSS_EVENT_PANEL_CLK_CTRL,
 	MDSS_EVENT_DSI_CMDLIST_KOFF,
-	MDSS_EVENT_ENABLE_PARTIAL_UPDATE,
+	MDSS_EVENT_ENABLE_PARTIAL_ROI,
+	MDSS_EVENT_DSI_STREAM_SIZE,
 	MDSS_EVENT_DSI_ULPS_CTRL,
 	MDSS_EVENT_DSI_DYNAMIC_SWITCH,
 };
@@ -272,10 +273,7 @@ struct mdss_panel_info {
 	u32 rst_seq[MDSS_DSI_RST_SEQ_LEN];
 	u32 rst_seq_len;
 	u32 vic; 
-	u32 roi_x;
-	u32 roi_y;
-	u32 roi_w;
-	u32 roi_h;
+	struct mdss_rect roi;
 	int bklt_ctrl;	
 	int pwm_pmic_gpio;
 	int pwm_lpg_chan;
@@ -295,6 +293,8 @@ struct mdss_panel_info {
 
 	u32 cont_splash_enabled;
 	u32 partial_update_enabled;
+	u32 partial_update_dcs_cmd_by_left;
+	u32 partial_update_roi_merge;
 	struct ion_handle *splash_ihdl;
 	u32 panel_power_on;
 
