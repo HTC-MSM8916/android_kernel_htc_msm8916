@@ -73,7 +73,7 @@
 #define YAS532_DATA_CENTER		(4096)
 #define YAS532_DATA_UNDERFLOW		(0)
 #define YAS532_DATA_OVERFLOW		(8190)
-#define YAS532_DEVICE_ID		(0x02)	
+#define YAS532_DEVICE_ID		(0x02)	/* YAS532 (MS-3R/3F) */
 #define YAS532_TEMP20DEGREE_TYPICAL	(390)
 
 #define YAS_X_OVERFLOW			(0x01)
@@ -88,7 +88,7 @@
 #define YAS532_MAG_STATE_NORMAL		(0)
 #define YAS532_MAG_STATE_INIT_COIL	(1)
 #define YAS532_MAG_STATE_MEASURE_OFFSET	(2)
-#define YAS532_MAG_INITCOIL_TIMEOUT	(1000)	
+#define YAS532_MAG_INITCOIL_TIMEOUT	(1000)	/* msec */
 #define YAS532_MAG_TEMPERATURE_LOG	(10)
 #define YAS532_MAG_NOTRANS_POSITION	(3)
 #if YAS532_DRIVER_NO_SLEEP
@@ -452,7 +452,7 @@ static int yas_measure(struct yas_data *data, int num, int temp_correction,
 			driver.measure_state = YAS532_MAG_STATE_NORMAL;
 			break;
 		}
-		
+		/* FALLTHRU */
 	case YAS532_MAG_STATE_MEASURE_OFFSET:
 		rt = yas_cdrv_measure_and_set_offset();
 		if (rt < 0)
@@ -501,9 +501,9 @@ static int yas_measure(struct yas_data *data, int num, int temp_correction,
 	for (i = 0; i < 3; i++) {
 		data->xyz.v[i] -= data->xyz.v[i] % 10;
 		if (*ouflow & (1<<(i*2)))
-			data->xyz.v[i] += 1; 
+			data->xyz.v[i] += 1; /* set overflow */
 		if (*ouflow & (1<<(i*2+1)))
-			data->xyz.v[i] += 2; 
+			data->xyz.v[i] += 2; /* set underflow */
 	}
 	tm = curtime();
 	data->type = YAS_TYPE_MAG;
@@ -969,7 +969,7 @@ static irqreturn_t yas_trigger_handler(int irq, void *p)
 		len = j * 4;
 	}
 
-	
+	/* Guaranteed to be aligned with 8 byte boundary */
 	if (indio_dev->scan_timestamp)
 		*(s64 *)((u8 *)mag + ALIGN(len, sizeof(s64))) = pf->timestamp;
 
@@ -1288,8 +1288,8 @@ static int yas_read_raw(struct iio_dev *indio_dev,
 		ret = IIO_VAL_INT;
 		break;
 	case IIO_CHAN_INFO_SCALE:
-		
-		
+		/* Gain : counts / uT = 1000 [nT] */
+		/* Scaling factor : 1000000 / Gain = 1000 */
 		*val = 0;
 		*val2 = 1000;
 		ret = IIO_VAL_INT_PLUS_MICRO;
@@ -1682,6 +1682,20 @@ static struct i2c_driver yas_driver = {
 };
 module_i2c_driver(yas_driver);
 
+/*
+static int __init yas_initialize(void)
+{
+	return i2c_add_driver(&yas_driver);
+}
+
+static void __exit yas_terminate(void)
+{
+	i2c_del_driver(&yas_driver);
+}
+
+module_init(yas_initialize);
+module_exit(yas_terminate);
+*/
 
 MODULE_DESCRIPTION("Yamaha YAS532 I2C driver");
 MODULE_LICENSE("GPL v2");

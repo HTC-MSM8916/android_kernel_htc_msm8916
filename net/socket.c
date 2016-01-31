@@ -578,7 +578,7 @@ const struct file_operations bad_sock_fops = {
 };
 
 #ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
-int add_or_remove_port(struct sock *sk, int add_or_remove);	
+int add_or_remove_port(struct sock *sk, int add_or_remove);	/* SSD_RIL: Garbage_Filter_TCP */
 #endif
 
 /**
@@ -1560,14 +1560,15 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 			err = sock->ops->listen(sock, backlog);
 
 		fput_light(sock->file, fput_needed);
+
 		if (!err)
 			sockev_notify(SOCKEV_LISTEN, sock);
 
 #ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
-		
+		/* ++SSD_RIL: Garbage_Filter_TCP */
 		if (sock->sk != NULL)
 			add_or_remove_port(sock->sk, 1);
-		
+		/* --SSD_RIL: Garbage_Filter_TCP */
 #endif
 	}
 	return err;

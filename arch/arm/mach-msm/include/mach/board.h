@@ -687,11 +687,12 @@ enum usb_connect_type {
 	CONNECT_TYPE_INTERNAL,
 	CONNECT_TYPE_UNSUPPORTED,
 #ifdef CONFIG_MACH_VERDI_LTE
-	
+	/* Y cable with USB and 9V charger */
 	CONNECT_TYPE_USB_9V_AC,
 #endif
 	CONNECT_TYPE_MHL_AC,
 };
+/* START: add USB connected notify function */
 struct t_usb_status_notifier{
 	struct list_head notifier_link;
 	const char *name;
@@ -702,6 +703,9 @@ int64_t htc_qpnp_adc_get_usbid_adc(void);
 int usb_get_connect_type(void);
 static LIST_HEAD(g_lh_usb_notifier_list);
 
+/***********************************
+Direction: cable detect drvier -> battery driver or other
+ ***********************************/
 struct t_cable_status_notifier{
 	struct list_head cable_notifier_link;
 	const char *name;
@@ -711,6 +715,9 @@ int cable_detect_register_notifier(struct t_cable_status_notifier *);
 static LIST_HEAD(g_lh_calbe_detect_notifier_list);
 
 #ifdef CONFIG_HTC_MHL_DETECTION
+/***********************************
+ Direction: sii9234 drvier -> cable detect driver
+***********************************/
 struct t_mhl_status_notifier{
         struct list_head mhl_notifier_link;
         const char *name;
@@ -720,6 +727,9 @@ int mhl_detect_register_notifier(struct t_mhl_status_notifier *);
 static LIST_HEAD(g_lh_mhl_detect_notifier_list);
 #endif
 
+/***********************************
+Direction: cable detect drvier -> usb driver
+ ***********************************/
 struct t_usb_host_status_notifier{
 	struct list_head usb_host_notifier_link;
 	const char *name;

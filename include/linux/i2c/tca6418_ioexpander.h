@@ -33,17 +33,19 @@
 
 #define IOEXPANDER_I2C_NAME "tca6418"
 
+/* IO expander chip TCA6418 */
 #define TCA6418E_Device               0x68
-#define TCA6418E_Reg_GPIO_DAT_STAT1  0x14  
-#define TCA6418E_Reg_GPIO_DAT_STAT2  0x15  
-#define TCA6418E_Reg_GPIO_DAT_STAT3  0x16  
-#define TCA6418E_Reg_GPIO_DAT_OUT1    0x17  
-#define TCA6418E_Reg_GPIO_DAT_OUT2    0x18  
-#define TCA6418E_Reg_GPIO_DAT_OUT3    0x19  
-#define TCA6418E_Reg_GPIO_DIR1        0x23  
-#define TCA6418E_Reg_GPIO_DIR2        0x24  
-#define TCA6418E_Reg_GPIO_DIR3        0x25  
+#define TCA6418E_Reg_GPIO_DAT_STAT1  0x14  //(H)GPIO0~GPIO7(L)
+#define TCA6418E_Reg_GPIO_DAT_STAT2  0x15  //(H)GPIO15~GPIO8(L)
+#define TCA6418E_Reg_GPIO_DAT_STAT3  0x16  //(H)GPIO17~GPIO16(L)
+#define TCA6418E_Reg_GPIO_DAT_OUT1    0x17  //(H)GPIO0~GPIO7(L)
+#define TCA6418E_Reg_GPIO_DAT_OUT2    0x18  //(H)GPIO15~GPIO8(L)
+#define TCA6418E_Reg_GPIO_DAT_OUT3    0x19  //(H)GPIO17~GPIO16(L)
+#define TCA6418E_Reg_GPIO_DIR1        0x23  //(H)GPIO0~GPIO7(L)      0/1: input/output
+#define TCA6418E_Reg_GPIO_DIR2        0x24  //(H)GPIO15~GPIO8(L)     0/1: input/output
+#define TCA6418E_Reg_GPIO_DIR3        0x25  //(H)GPIO17~GPIO16(L)    0/1: input/output
 #define TCA6418E_GPIO_NUM             18
+//---------------------//
 
 struct ioexp_i2c_platform_data {
 	struct platform_device *ioexp_devices;
@@ -78,4 +80,4 @@ int ioexp_read_gpio_status(uint8_t *data);
 void ioexp_print_gpio_status(void);
 void ioexp_register_ops(struct ioexp_ops *ops);
 
-#endif 
+#endif /* _LINUX_ATMEGA_MICROP_H */

@@ -913,10 +913,13 @@ cfg80211_inform_bss(struct wiphy *wiphy,
 	if (!res)
 		return NULL;
 
+// HTC_WIFI_START
+// prevent set country by 802.11d
 #if 0
 	if (res->pub.capability & WLAN_CAPABILITY_ESS)
 		regulatory_hint_found_beacon(wiphy, channel, gfp);
 #endif
+// HTC_WIFI_END
 
 	trace_cfg80211_return_bss(&res->pub);
 	/* cfg80211_bss_update gives us a referenced result */
@@ -981,10 +984,13 @@ cfg80211_inform_bss_frame(struct wiphy *wiphy,
 	if (!res)
 		return NULL;
 
+// HTC_WIFI_START
+// prevent set country by 802.11d
 #if 0
 	if (res->pub.capability & WLAN_CAPABILITY_ESS)
 		regulatory_hint_found_beacon(wiphy, channel, gfp);
 #endif
+// HTC_WIFI_END
 
 	trace_cfg80211_return_bss(&res->pub);
 	/* cfg80211_bss_update gives us a referenced result */

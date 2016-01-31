@@ -116,6 +116,7 @@ struct hw_component HTC_AUD_HW_LIST[AUD_HW_NUM] = {
 EXPORT_SYMBOL(HTC_AUD_HW_LIST);
 
 extern unsigned int system_rev;
+//extern unsigned skuid;	//not implemented
 void htc_acoustic_register_spk_amp(enum SPK_AMP_TYPE type,int (*aud_spk_amp_f)(int, int), struct file_operations* ops)
 {
 	mutex_lock(&spk_amp_lock);
@@ -248,6 +249,8 @@ acoustic_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (the_ops->get_htc_revision)
 			hw_rev = the_ops->get_htc_revision();
 		else
+			/* return 1 means lastest hw using
+			 * default configuration */
 			hw_rev = 1;
 
 		D("Audio HW revision:  %u\n", hw_rev);

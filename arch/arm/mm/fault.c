@@ -38,6 +38,7 @@
 
 #include <trace/events/exception.h>
 
+
 #ifdef CONFIG_MMU
 
 #ifdef CONFIG_KPROBES
@@ -145,7 +146,7 @@ __do_kernel_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 #if defined(CONFIG_HTC_DEBUG_RTB)
 	static int enable_logk_die = 1;
 
-	
+	/* prevent recursive panic in RTB */
 	if (enable_logk_die) {
 		enable_logk_die = 0;
 		uncached_logk(LOGK_DIE, (void *)regs->ARM_pc);
@@ -157,11 +158,12 @@ __do_kernel_fault(struct mm_struct *mm, unsigned long addr, unsigned int fsr,
 	/*
 	 * Are we prepared to handle this kernel fault?
 	 */
+
 	if (fixup_exception(regs))
 		return;
 
 #if defined(CONFIG_HTC_DEBUG_RTB)
-	
+	/* Disable RTB here to avoid weird recursive spinlock/printk behaviors */
 	msm_rtb_disable();
 #endif
 

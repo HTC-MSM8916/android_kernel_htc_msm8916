@@ -1421,7 +1421,7 @@ static int gpiod_request(struct gpio_desc *desc, const char *label)
 		const char* desc_label = NULL;
 		status = -EBUSY;
 #ifdef CONFIG_DEBUG_FS
-		
+		/* the `desc->label' only exists when CONFIG_DEBUG_FS is set */
 		desc_label = desc->label;
 #endif
 		pr_err("gpio_request: request gpio-%d (%s) but already occupied by %s\n",

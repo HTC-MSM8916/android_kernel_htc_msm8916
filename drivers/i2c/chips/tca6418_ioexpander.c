@@ -55,7 +55,7 @@ static int i2c_read_ioexpreg(struct i2c_client *client, uint8_t addr,
 	uint8_t *data, int length)
 {
 	int retry;
-	
+	/*prepare the data which i2c_transfer needed*/
 	struct ioexp_i2c_client_data *cdata;
 	struct i2c_msg msgs[] = {
 		{
@@ -75,7 +75,7 @@ static int i2c_read_ioexpreg(struct i2c_client *client, uint8_t addr,
 	cdata = i2c_get_clientdata(client);
 	mutex_lock(&cdata->ioexp_i2c_rw_mutex);
 
-	
+	/*read data by i2c_transfer */
 	for (retry = 0; retry <= I2C_READ_RETRY_TIMES; retry++) {
 		if (i2c_transfer(client->adapter, msgs, 2) == 2)
 			break;
@@ -112,16 +112,16 @@ static int i2c_write_ioexpreg(struct i2c_client *client, uint8_t addr,
 
 	dev_info(&client->dev, "W [%02X] = %s\n", addr, hex2string(data, length));
 
-	
+	/*setup client data*/
 	cdata = i2c_get_clientdata(client);
 
-	
+	/*check data length*/
 	if (length + 1 > IOEXP_I2C_WRITE_BLOCK_SIZE) {
 		dev_err(&client->dev, "[IOEXP_ERR] i2c_write_ioexpreg length too long\n");
 		return -E2BIG;
 	}
 
-	
+	/*setup data buffer which will be filled into register*/
 	buf[0] = addr;
 	for (i = 0; i < length; i++)
 		buf[i+1] = data[i];
@@ -130,14 +130,14 @@ static int i2c_write_ioexpreg(struct i2c_client *client, uint8_t addr,
 
 	printk(KERN_INFO "%s(), i2c_transfer(addr:0x%x, len:%d)\n", __func__, msg->addr, msg->len);
 
-	
+	/*write data buffer into register*/
 	for (retry = 0; retry <= I2C_WRITE_RETRY_TIMES; retry++) {
 		if (i2c_transfer(client->adapter, msg, 1) == 1)
 			break;
 		msleep(ioexp_rw_delay);
 	}
 
-	
+	/*check if retry timeout*/
 	if (retry > I2C_WRITE_RETRY_TIMES) {
 		dev_err(&client->dev, "[IOEXP_ERR] i2c_write_ioexpreg retry over %d\n",
 			I2C_WRITE_RETRY_TIMES);
@@ -154,14 +154,14 @@ int ioexp_i2c_read(uint8_t addr, uint8_t *data, int length)
 {
 	struct i2c_client *client = private_ioexp_client;
 
-	
+	/*printk(KERN_INFO "%s(), client = %u, client->addr:0x%x\n", __func__, (unsigned int) client, client->addr);*/
 
 	if (!client)	{
 		printk(KERN_ERR "[IOEXP_ERR] %s: dataset: client is empty\n", __func__);
 		return -EIO;
 	}
 
-	
+	/*printk(KERN_INFO "%s: i2c_read_ioexpreg(client->addr:0x%x, addr:%x, len:%d)\n", __func__, client->addr, addr, length);*/
 
 	if (i2c_read_ioexpreg(client, addr, data, length) < 0)	{
 		dev_err(&client->dev, "[IOEXP_ERR] %s: write ioexp i2c fail\n", __func__);
@@ -176,15 +176,15 @@ EXPORT_SYMBOL(ioexp_i2c_read);
 int ioexp_i2c_write(uint8_t addr, uint8_t *data, int length)
 {
 	struct i2c_client *client = private_ioexp_client;
-	
+	/*printk(KERN_INFO "%s(), client = 0x%x, client->addr:0x%x\n", __func__, (unsigned int)client, client->addr);*/
 
-	
+	/*check if client is empty*/
 	if (!client) {
 		printk(KERN_ERR "[IOEXP_ERR] %s: dataset: client is empty\n", __func__);
 		return -EIO;
 	}
 
-	
+	/*write data into register*/
 	if (i2c_write_ioexpreg(client, addr, data, length) < 0)	{
 		dev_err(&client->dev, "[IOEXP_ERR] %s: write ioexp i2c fail\n", __func__);
 		return -EIO;
@@ -200,23 +200,23 @@ int ioexp_gpio_set_value(uint8_t gpio, uint8_t value)
 	uint8_t addr;
 	uint8_t rdata = 0;
 	uint8_t wdata = 0;
-	
+	/* TCA6418 GPIO MAP */
 	unsigned char TCA6418_GPIO_BITMAP[18]={7,6,5,4,3,2,1,0,0,1,2,3,4,5,6,7,0,1};
 
 	struct ioexp_i2c_client_data *cdata;
 	struct i2c_client *client = private_ioexp_client;
 
-	
+	/*check if client is null*/
 	if (!client)	{
 		printk(KERN_ERR "[IOEXP_ERR] %s: dataset: client is empty\n", __func__);
 		return -EIO;
 	}
 
-	
+	/*get clint data and lock resource*/
 	cdata = i2c_get_clientdata(client);
 	mutex_lock(&cdata->ioexp_set_gpio_mutex);
 
-	
+	/*setup register*/
 	if ( (gpio >= 0) && (gpio <= 7) )
 		addr = TCA6418E_Reg_GPIO_DAT_OUT1;
 	else if ( (gpio >= 8) && (gpio <= 15) )
@@ -229,20 +229,20 @@ int ioexp_gpio_set_value(uint8_t gpio, uint8_t value)
 		return -1;
 	}
 
-	
+	/*read register value*/
 	if (ioexp_i2c_read(addr, &rdata, 1)) {
 		printk(KERN_ERR "[IOEXP_ERR] %s: readdata error, addr:0x%x\n", __func__, addr);
 		mutex_unlock(&cdata->ioexp_set_gpio_mutex);
 		return -1;
 	}
 
-	
+	/*fill gpio value into register value*/
 	if (value)
 		wdata = rdata | (1 << TCA6418_GPIO_BITMAP[gpio]);
 	else
 		wdata = rdata & ~(1 << TCA6418_GPIO_BITMAP[gpio]);
 
-	
+	/*write register value into register*/
 	if ( ioexp_i2c_write(addr, &wdata, 1) ) {
 		printk(KERN_ERR "[IOEXP_ERR] %s: writedata failed, addr:0x%x, data:0x%x\n", __func__, addr, wdata);
 		mutex_unlock(&cdata->ioexp_set_gpio_mutex);
@@ -262,7 +262,7 @@ int ioexp_gpio_get_value(uint8_t gpio)
 	uint8_t addr;
 	uint8_t rdata = 0;
 	int get_value = 0;
-	
+	/* TCA6418 GPIO MAP */
 	unsigned char TCA6418_GPIO_BITMAP[18]={7,6,5,4,3,2,1,0,0,1,2,3,4,5,6,7,0,1};
 
 	struct ioexp_i2c_client_data *cdata;
@@ -275,7 +275,7 @@ int ioexp_gpio_get_value(uint8_t gpio)
 	cdata = i2c_get_clientdata(client);
 	mutex_lock(&cdata->ioexp_set_gpio_mutex);
 
-	
+	/*setup gpio number and register*/
 	if ( (gpio >= 0) && (gpio <= 7) )
 		addr = TCA6418E_Reg_GPIO_DAT_STAT1;
 	else if ( (gpio >= 8) && (gpio <= 15) )
@@ -288,16 +288,16 @@ int ioexp_gpio_get_value(uint8_t gpio)
 		return -1;
 	}
 
-	
+	/*read register data*/
 	if (ioexp_i2c_read(addr, &rdata, 1)) {
-		
+		/*failed -> output register address*/
 		printk(KERN_ERR "[IOEXP_ERR] %s: readdata error, addr:0x%x\n", __func__, addr);
 		mutex_unlock(&cdata->ioexp_set_gpio_mutex);
 		return -1;
 	} else {
-		
+		/*success*/
 		get_value = (rdata >> TCA6418_GPIO_BITMAP[gpio]) & 0x1;
-		
+		/* printk(KERN_INFO "[IOEXP_INFO] %s: OK, addr:0x%x, rdata = %x, get_value:%d\n", __func__, addr, rdata, get_value); */
 	}
 
 	mutex_unlock(&cdata->ioexp_set_gpio_mutex);
@@ -311,7 +311,7 @@ int ioexp_gpio_get_direction(uint8_t gpio)
 	uint8_t addr;
 	uint8_t rdata = 0;
 	int get_direction = 0;
-	
+	/* TCA6418 GPIO MAP */
 	unsigned char TCA6418_GPIO_BITMAP[18]={7,6,5,4,3,2,1,0,0,1,2,3,4,5,6,7,0,1};
 
 	struct ioexp_i2c_client_data *cdata;
@@ -324,7 +324,7 @@ int ioexp_gpio_get_direction(uint8_t gpio)
 	cdata = i2c_get_clientdata(client);
 	mutex_lock(&cdata->ioexp_set_gpio_mutex);
 
-	
+	/*setup gpio number and register*/
 	if ( (gpio >= 0) && (gpio <= 7) )
 		addr = TCA6418E_Reg_GPIO_DIR1;
 	else if ( (gpio >= 8) && (gpio <= 15) )
@@ -337,16 +337,16 @@ int ioexp_gpio_get_direction(uint8_t gpio)
 		return -1;
 	}
 
-	
+	/*read register data*/
 	if (ioexp_i2c_read(addr, &rdata, 1)) {
-		
+		/*failed -> output register address*/
 		printk(KERN_ERR "[IOEXP_ERR] %s: readdata error, addr:0x%x\n", __func__, addr);
 		mutex_unlock(&cdata->ioexp_set_gpio_mutex);
 		return -1;
 	} else {
-		
+		/*success*/
 		get_direction = (rdata >> TCA6418_GPIO_BITMAP[gpio]) & 0x1;
-		
+		/* printk(KERN_INFO "[IOEXP_INFO] %s: OK, addr:0x%x, rdata = %x, get_value:%d\n", __func__, addr, rdata, get_direction); */
 	}
 
 	mutex_unlock(&cdata->ioexp_set_gpio_mutex);
@@ -521,6 +521,11 @@ err_cdata:
 #ifdef CONFIG_PM
 static int ioexp_i2c_suspend(struct device *dev)
 {
+	/*
+	if (get_kernel_flag() & KERNEL_FLAG_PM_MONITOR) {
+		ioexp_print_gpio_status();
+	}
+	*/
 	return 0;
 }
 static int ioexp_i2c_resume(struct device *dev)
@@ -530,7 +535,7 @@ static int ioexp_i2c_resume(struct device *dev)
 #else
 #define ioexp_i2c_suspend	NULL
 #define ioexp_i2c_resume	NULL
-#endif 
+#endif /* CONFIG_PM */
 
 static const struct dev_pm_ops ioexp_i2c_pm_ops = {
 #ifdef CONFIG_PM
@@ -553,7 +558,7 @@ static struct of_device_id ioexp_i2c_match_table[] = {
 };
 #else
 #define ioexp_i2c_match_table NULL
-#endif 
+#endif /* CONFIG_OF */
 
 static struct i2c_driver ioexp_i2c_driver = {
 	.driver = {

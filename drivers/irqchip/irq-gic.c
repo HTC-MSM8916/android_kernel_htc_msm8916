@@ -456,22 +456,22 @@ static asmlinkage void __exception_irq_entry gic_handle_irq(struct pt_regs *regs
 
 		if (likely(irqnr > 15 && irqnr < 1021)) {
 #if defined(CONFIG_HTC_DEBUG_WATCHDOG)
-			
+			/* only check on timer interrupt */
 			if (irqnr == 20 && smp_processor_id() == 0) {
 				unsigned long long timestamp = sched_clock();
 #if defined(CONFIG_HTC_DEBUG_RTB)
 				unsigned long long timestamp_ms = timestamp;
 				do_div(timestamp_ms, NSEC_PER_MSEC);
 				uncached_logk_pc(LOGK_IRQ, (void *)((unsigned long)timestamp_ms), (void *)irqnr);
-#endif 
+#endif /* CONFIG_HTC_DEBUG_RTB */
 				htc_debug_watchdog_check_pet(timestamp);
 			}
 #if defined(CONFIG_HTC_DEBUG_RTB)
 			else {
 				uncached_logk_pc(LOGK_IRQ, (void *)htc_debug_get_sched_clock_ms(), (void *)irqnr);
 			}
-#endif 
-#endif 
+#endif /* CONFIG_HTC_DEBUG_RTB */
+#endif /* CONFIG_HTC_DEBUG_WATCHDOG */
 			irqnr = irq_find_mapping(gic->domain, irqnr);
 			handle_IRQ(irqnr, regs);
 			continue;

@@ -516,7 +516,7 @@ static int _disp_tz_htc_log_stats(char __user *ubuf, size_t count, loff_t *offp)
 	int ret;
 
 	if (buf != 0) {
-		
+		/* update r_cursor */
 		r_cursor = *pr_cursor;
 		w_cursor = *pw_cursor;
 

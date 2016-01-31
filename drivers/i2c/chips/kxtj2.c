@@ -80,7 +80,20 @@ static DECLARE_WORK(irq_work, kxtj2_irq_work_func);
 #define YAS_RESOLUTION                                                    (1024)
 #endif
 #define YAS_GRAVITY_EARTH                                              (9806550)
+/*
+   YAS_POWERUP_TIME
+
+   Waiting time (max.) is required after powerup, but wating time (max.) is
+   unknown. So, waiting time (max.) is assumed here as 20 [msec], twice the
+   powerup time typical: 10 [msec].
+*/
 #define YAS_POWERUP_TIME                                                 (20000)
+/*
+   YAS_SOFTRESET_WAIT_TIME
+
+   Waiting time is required after softreset, but waiting time is unknown.
+   So, waiting time is assumed here as 1 [msec].
+*/
 #define YAS_SOFTRESET_WAIT_TIME                                           (1000)
 #define YAS_SOFTRESET_COUNT_MAX                                             (20)
 #define YAS_DEFAULT_POSITION                                                 (0)
@@ -161,14 +174,14 @@ static const struct yas_odr yas_odr_tbl[] = {
 };
 
 static const int8_t yas_position_map[][3][3] = {
-	{ { 0, -1,  0}, { 1,  0,  0}, { 0,  0,  1} },
-	{ { 1,  0,  0}, { 0,  1,  0}, { 0,  0,  1} },
-	{ { 0,  1,  0}, {-1,  0,  0}, { 0,  0,  1} },
-	{ {-1,  0,  0}, { 0, -1,  0}, { 0,  0,  1} },
-	{ { 0,  1,  0}, { 1,  0,  0}, { 0,  0, -1} },
-	{ {-1,  0,  0}, { 0,  1,  0}, { 0,  0, -1} },
-	{ { 0, -1,  0}, {-1,  0,  0}, { 0,  0, -1} },
-	{ { 1,  0,  0}, { 0, -1,  0}, { 0,  0, -1} },
+	{ { 0, -1,  0}, { 1,  0,  0}, { 0,  0,  1} },/* top/upper-left */
+	{ { 1,  0,  0}, { 0,  1,  0}, { 0,  0,  1} },/* top/upper-right */
+	{ { 0,  1,  0}, {-1,  0,  0}, { 0,  0,  1} },/* top/lower-right */
+	{ {-1,  0,  0}, { 0, -1,  0}, { 0,  0,  1} },/* top/lower-left */
+	{ { 0,  1,  0}, { 1,  0,  0}, { 0,  0, -1} },/* bottom/upper-right */
+	{ {-1,  0,  0}, { 0,  1,  0}, { 0,  0, -1} },/* bottom/upper-left */
+	{ { 0, -1,  0}, {-1,  0,  0}, { 0,  0, -1} },/* bottom/lower-left */
+	{ { 1,  0,  0}, { 0, -1,  0}, { 0,  0, -1} },/* bottom/lower-right */
 };
 
 static struct yas_module module;
@@ -590,7 +603,7 @@ static irqreturn_t yas_trigger_handler(int irq, void *p)
 		len = j * 4;
 	}
 
-	
+	/* Guaranteed to be aligned with 8 byte boundary */
 	if (indio_dev->scan_timestamp)
 		*(s64 *)((u8 *)acc + ALIGN(len, sizeof(s64))) = pf->timestamp;
 
@@ -832,8 +845,8 @@ static int yas_read_raw(struct iio_dev *indio_dev,
 		break;
 	case IIO_CHAN_INFO_SCALE:
 	case IIO_CHAN_INFO_CALIBSCALE:
-		
-		
+		/* Gain : counts / m/s^2 = 1000000 [um/s^2] */
+		/* Scaling factor : 1000000 / Gain = 1 */
 		*val = 0;
 		*val2 = 1;
 		ret = IIO_VAL_INT_PLUS_MICRO;
@@ -1003,24 +1016,24 @@ static void kxtj2_irq_work_func(struct work_struct *work)
 {
 	unsigned char status = 0;
 
-	
+	//wake_lock_timeout(&(bma250->cir_always_ready_wake_lock), 1*HZ);
 
-	
+	//bma250_get_interruptstatus1(bma250->bma250_client, &status);
 	I("bma250_irq_work_func, status = 0x%x\n", status);
 
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
+	//input_report_rel(bma250->input_cir,
+	//	SLOP_INTERRUPT,
+	//	SLOPE_INTERRUPT_X_NEGATIVE_HAPPENED);
+	//input_report_rel(bma250->input_cir,
+	//	SLOP_INTERRUPT,
+	//	SLOPE_INTERRUPT_Y_NEGATIVE_HAPPENED);
+	//input_report_rel(bma250->input_cir,
+	//	SLOP_INTERRUPT,
+	//	SLOPE_INTERRUPT_X_HAPPENED);
+	//input_report_rel(bma250->input_cir,
+	//	SLOP_INTERRUPT,
+	//	SLOPE_INTERRUPT_Y_HAPPENED);
+	//input_sync(bma250->input_cir);
 
 	enable_irq(module.IRQ);
 }

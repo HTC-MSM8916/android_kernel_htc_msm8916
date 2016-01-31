@@ -124,7 +124,7 @@ static int __init sysinfo_proc_init(void)
 	emmc_partition_update = 0;
 	pr_info("%s: Init HTC system info proc interface.\r\n", __func__);
 
-	
+	/* NOTE: kernel 3.10 use proc_create_data to create /proc file node */
 	entry = proc_create_data("emmc", 0644, NULL, &htc_emmc_partition_fops, NULL);
 	if (entry == NULL) {
 		pr_info(KERN_ERR "%s: unable to create /proc entry\n", __func__);

@@ -1524,6 +1524,10 @@ static int akm_compass_power_init(struct akm_compass_data *data, bool on)
 		}
 
 		data->power_enabled = true;
+		/*
+		 * The max time for the power supply rise time is 50ms.
+		 * Use 80ms to make sure it meets the requirements.
+		 */
 
 		msleep(80);
 	} else {
@@ -1758,6 +1762,7 @@ int akm8963_compass_probe(
 	/* set i2c data */
 	i2c_set_clientdata(i2c, s_akm);
 
+	/* initialize pinctrl */
 	if (!akm8963_pinctrl_init(s_akm)) {
 		err = pinctrl_select_state(s_akm->pinctrl, s_akm->pin_default);
 		if (err) {

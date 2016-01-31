@@ -96,7 +96,7 @@ static int config_data_init(void)
 		has_config_data = true;
 	} else {
 		pr_err("!!! COULDN'T FIND CONFIG DATA node !!!\n");
-		
+		/* we may need kernel log to debug */
 		cfg_flag_index[KERNEL_FLAG_INDEX] = 0x2;
 	}
 
