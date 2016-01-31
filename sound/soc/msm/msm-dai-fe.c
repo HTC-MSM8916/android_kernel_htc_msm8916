@@ -1080,7 +1080,7 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 		.probe = fe_dai_probe,
 	},
 #endif
-#if defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_A31_UL)
+#if defined(CONFIG_MACH_A31_UL)
        {
 		.playback = {
 			.stream_name = "MM_STUB Playback",

@@ -44,7 +44,11 @@
    and provided to the battery driver in the units desired for
    their framework which is 0.1DegC. True resolution of 0.1DegC
    will result in the below table size to increase by 10 times */
+#ifdef CONFIG_MACH_A11_UL
+static const struct qpnp_vadc_map_pt adcmap_btm_threshold[] = {
+#else
 static struct qpnp_vadc_map_pt adcmap_btm_threshold[] = {
+#endif
 #if defined(CONFIG_HTC_BATT_8960)
 	{-200,	1670},
 	{-190,	1662},
@@ -732,6 +736,7 @@ static int64_t qpnp_adc_scale_ratiometric_calib(int32_t adc_code,
 	return adc_voltage;
 }
 
+#ifndef CONFIG_MACH_A11_UL
 void htc_load_temperature_data(struct device_node *data_node)
 {
 	struct property *prop;
@@ -762,6 +767,7 @@ void htc_load_temperature_data(struct device_node *data_node)
 	}
 }
 EXPORT_SYMBOL(htc_load_temperature_data);
+#endif
 
 int32_t qpnp_adc_scale_pmic_therm(struct qpnp_vadc_chip *vadc,
 		int32_t adc_code,

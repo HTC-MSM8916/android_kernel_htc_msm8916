@@ -34,7 +34,7 @@ static struct htc_battery_cell *cells;	/* ptr to an array */
 static int cell_num;					/* cells array size */
 static struct htc_battery_cell *cur_cell; /* cell current using */
 static bool flag_enable_bms_charger_log;
-#if defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_A31_UL)
+#if defined(CONFIG_MACH_A31_UL)
 static int a31_dtul_battery_id = 0;
 #endif
 
@@ -146,7 +146,7 @@ inline struct htc_battery_cell *htc_battery_cell_find(int id_raw)
 	return pcell;
 }
 
-#if defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_A31_UL)
+#if defined(CONFIG_MACH_A31_UL)
 static int __init check_battery_setup(char *str)
 {
     if (!strcmp(str, "true")) {
@@ -168,7 +168,7 @@ inline int htc_battery_cell_find_and_set_id_auto(int id_raw)
 	static int unknown_count = 0;
 	struct htc_battery_cell *pcell = NULL;
 
-#if defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_A31_UL)
+#if defined(CONFIG_MACH_A31_UL)
     pcell = htc_battery_cell_find(a31_dtul_battery_id);
 #else  
 	pcell = htc_battery_cell_find(id_raw);
