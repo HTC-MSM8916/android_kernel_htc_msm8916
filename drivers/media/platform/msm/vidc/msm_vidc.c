@@ -1017,11 +1017,16 @@ int msm_vidc_dqbuf(void *instance, struct v4l2_buffer *b)
 		}
 	}
 
-	if (!buffer_info && inst->map_output_buffer) {
-		dprintk(VIDC_ERR,
-			"%s: error - no buffer info found in registered list\n",
-			__func__);
-		return -EINVAL;
+	if (!buffer_info) {
+		if(inst->map_output_buffer) {
+			dprintk(VIDC_ERR,
+				"%s: error - no buffer info found in registered list\n",
+				__func__);
+			return -EINVAL;
+		} else {
+			dprintk(VIDC_ERR, "%s: NULL buffer_info!!\n", __func__);
+			return -EINVAL;
+		}
 	}
 
 	if (is_dynamic_output_buffer_mode(b, inst)) {

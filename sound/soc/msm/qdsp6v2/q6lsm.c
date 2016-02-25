@@ -341,7 +341,7 @@ void q6lsm_client_free(struct lsm_client *client)
 		pr_err("%s: Invalid Session %d\n", __func__, client->session);
 		return;
 	}
-	apr_deregister(client->apr);
+	apr_deregister_port(client->apr, ((client->session) << 8 | client->session));
 	client->mmap_apr = NULL;
 	q6lsm_session_free(client);
 	q6lsm_mmap_apr_dereg();

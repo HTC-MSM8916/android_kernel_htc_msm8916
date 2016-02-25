@@ -1,0 +1,8 @@
+#
+# HTC_DEBUG stability Kconfig
+#
+
+config HTC_DEBUG_PAGE_ENTRIES_NR
+	int
+	default 8
+

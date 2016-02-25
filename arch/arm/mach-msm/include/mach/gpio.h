@@ -228,4 +228,8 @@ static inline int msm_gpio_install_direct_irq(unsigned gpio, unsigned irq,
 }
 #endif
 
+#if defined(CONFIG_HTC_POWER_DEBUG) && defined(CONFIG_PINCTRL_MSM_TLMM_V3)
+int msm_dump_gpios(struct seq_file *m, int curr_len, char *gpio_buffer);
+#endif
+
 #endif /* __ASM_ARCH_MSM_GPIO_H */

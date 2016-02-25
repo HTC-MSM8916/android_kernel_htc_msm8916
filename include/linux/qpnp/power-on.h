@@ -54,6 +54,13 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_RTC		= 0x03,
 };
 
+enum pon_type {
+	PON_KPDPWR,
+	PON_RESIN,
+	PON_CBLPWR,
+	PON_KPDPWR_RESIN,
+};
+
 #ifdef CONFIG_QPNP_POWER_ON
 int qpnp_pon_system_pwr_off(enum pon_power_off_type type);
 int qpnp_pon_is_warm_reset(void);
@@ -61,7 +68,12 @@ int qpnp_pon_trigger_config(enum pon_trigger_source pon_src, bool enable);
 int qpnp_pon_wd_config(bool enable);
 int qpnp_pon_set_restart_reason(enum pon_restart_reason reason);
 bool qpnp_pon_check_hard_reset_stored(void);
-
+#if defined(CONFIG_CLR_KPDPWR_RESET_BATT_RMV) || \
+	defined(CONFIG_POWER_KEY_CLR_RESET)
+int qpnp_config_reset_enable(int pon_type, int en);
+int qpnp_get_reset_en(int pon_type);
+int sw_mistouch_ctrl(int en);
+#endif
 #else
 static int qpnp_pon_system_pwr_off(enum pon_power_off_type type)
 {
@@ -85,6 +97,18 @@ static inline bool qpnp_pon_check_hard_reset_stored(void)
 {
 	return false;
 }
+
+#if defined(CONFIG_CLR_KPDPWR_RESET_BATT_RMV) || \
+	defined(CONFIG_POWER_KEY_CLR_RESET)
+static inline int qpnp_config_reset_enable(int pon_type, int en)
+{
+	return -ENODEV;
+}
+static inline int qpnp_get_reset_en(int pon_type)
+{
+	return -ENODEV;
+}
+#endif
 #endif
 
 #endif

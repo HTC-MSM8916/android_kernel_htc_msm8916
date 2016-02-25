@@ -130,6 +130,10 @@ struct usb_phy {
 	/* for notification of usb_phy_dbg_events */
 	void	(*dbg_event)(struct usb_phy *x,
 			char *event, int msg1, int msg2);
+
+	void	(*notify_usb_attached)(struct usb_phy *x);
+
+	void	(*notify_usb_disabled)(void);
 };
 
 /**

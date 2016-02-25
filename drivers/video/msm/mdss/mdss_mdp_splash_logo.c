@@ -600,6 +600,11 @@ static __ref int mdss_mdp_splash_parse_dt(struct msm_fb_data_type *mfd)
 				of_property_read_bool(pdev->dev.of_node,
 				"qcom,mdss-fb-splash-logo-enabled");
 
+	/*if (of_property_read_bool(pdev->dev.of_node,
+				  "htc,fbmem-heap-remapping")) {
+		return 0;
+	}*/
+
 	of_find_property(pdev->dev.of_node, "qcom,memblock-reserve", &len);
 	if (len) {
 		len = len / sizeof(u32);

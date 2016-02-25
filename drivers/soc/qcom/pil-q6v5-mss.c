@@ -32,10 +32,19 @@
 #include <soc/qcom/ramdump.h>
 #include <soc/qcom/smem.h>
 #include <soc/qcom/smsm.h>
+#if defined(CONFIG_HTC_FEATURES_RIL_PCN0001_REBOOT_WITH_ERASE_EFS)
+#include <soc/qcom/restart.h>
+#include <asm/system_misc.h>
+#include "smd_private.h"
+#endif
 
 #include "peripheral-loader.h"
 #include "pil-q6v5.h"
 #include "pil-msa.h"
+#if defined(CONFIG_HTC_FEATURES_SSR)
+#include <mach/devices_dtb.h>
+#include <mach/devices_cmdline.h>
+#endif
 
 #define MAX_VDD_MSS_UV		1150000
 #define PROXY_TIMEOUT_MS	10000
@@ -84,7 +93,23 @@ static irqreturn_t modem_err_fatal_intr_handler(int irq, void *dev_id)
 
 	pr_err("Fatal error on the modem.\n");
 	subsys_set_crash_status(drv->subsys, true);
+#if defined(CONFIG_HTC_FEATURES_RIL_PCN0001_REBOOT_WITH_ERASE_EFS)
+	if (smd_smsm_erase_efs()) {
+		pr_err("Unrecoverable efs, need to reboot and erase"
+				"modem_st1/st2 partitions...\n");
+		if ( arm_pm_restart ) {
+			arm_pm_restart(REBOOT_HARD, "erase-efs");
+		}
+		else {
+			pr_err("arm_pm_restart is null\n");
+			restart_modem(drv);
+		}
+	} else {
+		restart_modem(drv);
+	}
+#else
 	restart_modem(drv);
+#endif
 	return IRQ_HANDLED;
 }
 
@@ -227,6 +252,37 @@ static int pil_subsys_init(struct modem_data *drv,
 		ret = PTR_ERR(drv->subsys);
 		goto err_subsys;
 	}
+
+#if defined(CONFIG_HTC_FEATURES_SSR)
+#if defined(CONFIG_HTC_FEATURES_SSR_MODEM_ENABLE)
+	if (get_kernel_flag() & (KERNEL_FLAG_ENABLE_SSR_MODEM)) {
+		subsys_set_restart_level(drv->subsys, RESET_SOC);
+		subsys_set_enable_ramdump(drv->subsys, DISABLE_RAMDUMP);
+	} else {
+		subsys_set_restart_level(drv->subsys, RESET_SUBSYS_COUPLED);
+		if (get_radio_flag() & BIT(3))
+			subsys_set_enable_ramdump(drv->subsys, ENABLE_RAMDUMP);
+		else
+			subsys_set_enable_ramdump(drv->subsys, DISABLE_RAMDUMP);
+	}
+#else
+	if (get_kernel_flag() & (KERNEL_FLAG_ENABLE_SSR_MODEM)) {
+		subsys_set_restart_level(drv->subsys, RESET_SUBSYS_COUPLED);
+		if (get_radio_flag() & BIT(3))
+			subsys_set_enable_ramdump(drv->subsys, ENABLE_RAMDUMP);
+		else
+			subsys_set_enable_ramdump(drv->subsys, DISABLE_RAMDUMP);
+	} else {
+		subsys_set_restart_level(drv->subsys, RESET_SOC);
+		subsys_set_enable_ramdump(drv->subsys, DISABLE_RAMDUMP);
+	}
+#endif
+
+	if (board_mfg_mode() != 0) {
+		subsys_set_restart_level(drv->subsys, RESET_SOC);
+		subsys_set_enable_ramdump(drv->subsys, DISABLE_RAMDUMP);
+	}
+#endif
 
 	drv->ramdump_dev = create_ramdump_device("modem", &pdev->dev);
 	if (!drv->ramdump_dev) {

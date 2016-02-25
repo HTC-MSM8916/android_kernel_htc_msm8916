@@ -448,6 +448,14 @@ int q6asm_get_apr_service_id(int session_id);
 */
 int q6asm_media_format_block(struct audio_client *ac, uint32_t format);
 
+int q6asm_stream_sample_rate_to_htc_misc_effect(struct audio_client *ac, uint32_t stream_id,
+		uint32_t module_id, uint32_t param_id, uint32_t sample_rate);
+#ifdef CONFIG_HTC_AUD_SRS_ENABLE
+int q6asm_enable_effect(struct audio_client *ac, uint32_t module_id,
+			uint32_t param_id, uint32_t payload_size,
+			void *payload);
+#endif
+
 /* Send the meta data to remove initial and trailing silence */
 int q6asm_send_meta_data(struct audio_client *ac, uint32_t initial_samples,
 		uint32_t trailing_samples);

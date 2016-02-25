@@ -58,7 +58,7 @@ static void adsp_loader_do(struct platform_device *pdev)
 	const char *img_name;
 
 	if (!pdev) {
-		dev_err(&pdev->dev, "%s: Platform device null\n", __func__);
+		pr_err("%s: Platform device null\n", __func__);
 		goto fail;
 	}
 

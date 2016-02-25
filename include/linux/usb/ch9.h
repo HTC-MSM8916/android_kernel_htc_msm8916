@@ -35,6 +35,9 @@
 #include <uapi/linux/usb/ch9.h>
 
 
+#define USB_REQ_HTC_FUNCTION		0x01
+
+#define USB_WVAL_ADB				0x01
 /**
  * usb_speed_string() - Returns human readable-name of the speed.
  * @speed: The speed to return human-readable name for.  If it's not

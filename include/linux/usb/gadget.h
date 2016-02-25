@@ -145,6 +145,9 @@ struct usb_ep_ops {
 
 	int (*fifo_status) (struct usb_ep *ep);
 	void (*fifo_flush) (struct usb_ep *ep);
+#ifdef CONFIG_MACH_DUMMY
+	void (*nuke) (struct usb_ep *ep);
+#endif
 };
 
 /**
@@ -451,6 +454,13 @@ static inline void usb_ep_fifo_flush(struct usb_ep *ep)
 		ep->ops->fifo_flush(ep);
 }
 
+#ifdef CONFIG_MACH_DUMMY
+static inline void usb_ep_nuke(struct usb_ep *ep)
+{
+	if (ep->ops->nuke)
+		ep->ops->nuke(ep);
+}
+#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -558,6 +568,7 @@ struct usb_gadget {
 	unsigned			otg_srp_reqd:1;
 	const char			*name;
 	struct device			dev;
+	int					miMaxMtu;
 	unsigned			out_epnum;
 	unsigned			in_epnum;
 	bool				l1_supported;
@@ -879,6 +890,7 @@ struct usb_gadget_driver {
 	int			(*setup)(struct usb_gadget *,
 					const struct usb_ctrlrequest *);
 	void			(*disconnect)(struct usb_gadget *);
+	void			(*mute_disconnect)(struct usb_gadget *);
 	void			(*suspend)(struct usb_gadget *);
 	void			(*resume)(struct usb_gadget *);
 

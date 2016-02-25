@@ -205,6 +205,7 @@ struct qseecom_listener_handle {
 };
 
 static struct qseecom_control qseecom;
+static struct qseecom_dev_handle crypto_data;
 
 struct qseecom_dev_handle {
 	enum qseecom_client_handle_type type;
@@ -4439,6 +4440,41 @@ static int qseecom_qteec_invoke_modfd_cmd(struct qseecom_dev_handle *data,
 				ION_IOC_INV_CACHES);
 	return 0;
 }
+
+int qseecom_crypto_clk_control(bool enable)
+{
+	int ret = 0;
+
+	if (enable) {
+		if (qseecom.support_bus_scaling) {
+			mutex_lock(&qsee_bw_mutex);
+			ret = __qseecom_register_bus_bandwidth_needs(&crypto_data, MEDIUM);
+			mutex_unlock(&qsee_bw_mutex);
+			if (ret) {
+				pr_err("qseecom bus bw needs failed\n");
+				return ret;
+			}
+		}
+
+
+		ret = __qseecom_enable_clk_scale_up(&crypto_data);
+		if (ret) {
+			pr_err("qseecom clock enable and scale up failed\n");
+			goto exit_register_bus_bandwidth_needs;
+		}
+		return 0;
+	}
+	__qseecom_disable_clk_scale_down(&crypto_data);
+
+exit_register_bus_bandwidth_needs:
+	if (qseecom.support_bus_scaling) {
+		mutex_lock(&qsee_bw_mutex);
+		ret = qseecom_unregister_bus_bandwidth_needs(&crypto_data);
+		mutex_unlock(&qsee_bw_mutex);
+	}
+	return ret;
+}
+EXPORT_SYMBOL(qseecom_crypto_clk_control);
 
 long qseecom_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {

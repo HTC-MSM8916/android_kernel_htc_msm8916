@@ -6098,11 +6098,13 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	struct task_struct *p;
 	int retval;
 
+	get_online_cpus();
 	rcu_read_lock();
 
 	p = find_process_by_pid(pid);
 	if (!p) {
 		rcu_read_unlock();
+		put_online_cpus();
 		return -ESRCH;
 	}
 
@@ -6159,6 +6161,7 @@ out_free_cpus_allowed:
 	free_cpumask_var(cpus_allowed);
 out_put_task:
 	put_task_struct(p);
+	put_online_cpus();
 	return retval;
 }
 
@@ -6201,6 +6204,7 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 	unsigned long flags;
 	int retval;
 
+	get_online_cpus();
 	rcu_read_lock();
 
 	retval = -ESRCH;
@@ -6213,11 +6217,12 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 		goto out_unlock;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
-	cpumask_and(mask, &p->cpus_allowed, cpu_active_mask);
+	cpumask_and(mask, &p->cpus_allowed, cpu_online_mask);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 out_unlock:
 	rcu_read_unlock();
+	put_online_cpus();
 
 	return retval;
 }
@@ -6587,6 +6592,7 @@ void sched_show_task(struct task_struct *p)
 	unsigned long free = 0;
 	int ppid;
 	unsigned state;
+	struct task_struct *group_leader;
 
 	state = p->state ? __ffs(p->state) + 1 : 0;
 	printk(KERN_INFO "%-15.15s %c", p->comm,
@@ -6608,15 +6614,40 @@ void sched_show_task(struct task_struct *p)
 	rcu_read_lock();
 	ppid = task_pid_nr(rcu_dereference(p->real_parent));
 	rcu_read_unlock();
-	printk(KERN_CONT "%5lu %5d %6d 0x%08lx\n", free,
+	printk(KERN_CONT "%5lu %5d %6d 0x%08lx c%d %llu\n", free,
 		task_pid_nr(p), ppid,
-		(unsigned long)task_thread_info(p)->flags);
+		(unsigned long)task_thread_info(p)->flags, p->on_cpu,
+#if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
+		div64_u64(task_rq(p)->clock - p->sched_info.last_arrival, NSEC_PER_MSEC));
+#else
+		(unsigned long long)0);
+#endif
+
+	group_leader = p->group_leader;
+	printk(KERN_CONT "  tgid: %d, group leader: %s\n",
+			p->tgid, group_leader ? group_leader->comm : "unknown");
+
+#if defined(CONFIG_DEBUG_MUTEXES)
+	if (state == TASK_UNINTERRUPTIBLE) {
+		struct task_struct* blocker = p->blocked_by;
+		if (blocker) {
+			printk(KERN_CONT "  blocked by %.32s (%d:%d) for %u ms\n",
+				blocker->comm, blocker->tgid, blocker->pid,
+				jiffies_to_msecs(jiffies - p->blocked_since));
+		}
+	}
+#endif
 
 	print_worker_info(KERN_INFO, p);
 	show_stack(p, NULL);
 }
 
 void show_state_filter(unsigned long state_filter)
+{
+	show_thread_group_state_filter(NULL, state_filter);
+}
+
+void show_thread_group_state_filter(const char *tg_comm, unsigned long state_filter)
 {
 	struct task_struct *g, *p;
 
@@ -6634,14 +6665,17 @@ void show_state_filter(unsigned long state_filter)
 		 * console might take a lot of time:
 		 */
 		touch_nmi_watchdog();
-		if (!state_filter || (p->state & state_filter))
-			sched_show_task(p);
+		if (!tg_comm || (tg_comm && !strncmp(tg_comm, g->comm, TASK_COMM_LEN))) {
+			if (!state_filter || (p->state & state_filter))
+				sched_show_task(p);
+		}
 	} while_each_thread(g, p);
 
 	touch_all_softlockup_watchdogs();
 
 #ifdef CONFIG_SYSRQ_SCHED_DEBUG
-	sysrq_sched_debug_show();
+	if (!tg_comm)
+		sysrq_sched_debug_show();
 #endif
 	rcu_read_unlock();
 	/*
@@ -8841,6 +8875,7 @@ void __init sched_init_smp(void)
 
 	sched_init_numa();
 
+	get_online_cpus();
 	/*
 	 * There's no userspace yet to cause hotplug operations; hence all the
 	 * cpu masks are stable and all blatant races in the below code cannot
@@ -8852,6 +8887,7 @@ void __init sched_init_smp(void)
 	if (cpumask_empty(non_isolated_cpus))
 		cpumask_set_cpu(smp_processor_id(), non_isolated_cpus);
 	mutex_unlock(&sched_domains_mutex);
+	put_online_cpus();
 
 	hotcpu_notifier(sched_domains_numa_masks_update, CPU_PRI_SCHED_ACTIVE);
 	hotcpu_notifier(cpuset_cpu_active, CPU_PRI_CPUSET_ACTIVE);

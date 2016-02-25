@@ -20,6 +20,7 @@
 #include <linux/bsg.h>
 #include <linux/smp.h>
 #include <linux/rcupdate.h>
+#include <linux/ktime.h>
 
 #include <asm/scatterlist.h>
 
@@ -104,6 +105,10 @@ struct request {
 	unsigned long atomic_flags;
 
 	int cpu;
+
+	ktime_t		enter_time;
+	ktime_t		process_time;
+	pid_t pid;
 
 	/* the following two fields are internal, NEVER access directly */
 	unsigned int __data_len;	/* total data len */
@@ -1102,7 +1107,7 @@ extern int blk_verify_command(unsigned char *cmd, fmode_t has_write_perm);
 enum blk_default_limits {
 	BLK_MAX_SEGMENTS	= 128,
 	BLK_SAFE_MAX_SECTORS	= 255,
-	BLK_DEF_MAX_SECTORS	= 1024,
+	BLK_DEF_MAX_SECTORS	= 4096,
 	BLK_MAX_SEGMENT_SIZE	= 65536,
 	BLK_SEG_BOUNDARY_MASK	= 0xFFFFFFFFUL,
 };

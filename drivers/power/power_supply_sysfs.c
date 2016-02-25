@@ -74,6 +74,9 @@ static ssize_t power_supply_show_property(struct device *dev,
 	const ptrdiff_t off = attr - power_supply_attrs;
 	union power_supply_propval value;
 
+	if (!psy)
+		return -ENODATA;
+
 	if (off == POWER_SUPPLY_PROP_TYPE)
 		value.intval = psy->type;
 	else
@@ -89,6 +92,9 @@ static ssize_t power_supply_show_property(struct device *dev,
 		return ret;
 	}
 
+	if (value.intval < 0)
+		return -ENODATA;
+
 	if (off == POWER_SUPPLY_PROP_STATUS)
 		return sprintf(buf, "%s\n", status_text[value.intval]);
 	else if (off == POWER_SUPPLY_PROP_CHARGE_TYPE)
@@ -101,6 +107,8 @@ static ssize_t power_supply_show_property(struct device *dev,
 		return sprintf(buf, "%s\n", capacity_level_text[value.intval]);
 	else if (off == POWER_SUPPLY_PROP_TYPE)
 		return sprintf(buf, "%s\n", type_text[value.intval]);
+	else if (off == POWER_SUPPLY_PROP_OVERLOAD)
+		return sprintf(buf, "%d\n", value.intval);
 	else if (off == POWER_SUPPLY_PROP_SCOPE)
 		return sprintf(buf, "%s\n", scope_text[value.intval]);
 	else if (off >= POWER_SUPPLY_PROP_MODEL_NAME)
@@ -221,6 +229,7 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(manufacturer),
 	POWER_SUPPLY_ATTR(serial_number),
 	POWER_SUPPLY_ATTR(battery_type),
+	POWER_SUPPLY_ATTR(overload),
 };
 
 static struct attribute *

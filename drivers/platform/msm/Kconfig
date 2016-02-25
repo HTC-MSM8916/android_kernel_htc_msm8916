@@ -54,6 +54,12 @@ config QPNP_POWER_ON
 	  PNP PMIC. It currently supports reporting the change in status of
 	  the KPDPWR_N line (connected to the power-key).
 
+config QPNP_KEY_INPUT
+	bool "QPNP Keyevent Support"
+	depends on QPNP_POWER_ON
+	help
+	  Say 'y' to enable keyevents reporting.
+
 config QPNP_CLKDIV
 	tristate "QPNP PMIC clkdiv driver"
 	depends on OF_SPMI && SPMI

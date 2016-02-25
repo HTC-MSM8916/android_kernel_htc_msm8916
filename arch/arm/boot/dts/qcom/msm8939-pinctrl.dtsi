@@ -164,7 +164,7 @@
 			label = "sdc1-clk";
 			sdc1_clk_on: clk_on {
 				bias-disable; /* NO pull */
-				drive-strength = <16>; /* 16 MA */
+				drive-strength = <14>; /* 14 MA */
 			};
 			sdc1_clk_off: clk_off {
 				bias-disable; /* NO pull */

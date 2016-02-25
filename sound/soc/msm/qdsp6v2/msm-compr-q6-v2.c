@@ -38,6 +38,8 @@
 #include "audio_ocmem.h"
 #include <sound/tlv.h>
 
+#include <mach/htc_acoustic_alsa.h>
+
 #define COMPRE_CAPTURE_NUM_PERIODS	16
 /* Allocate the worst case frame size for compressed audio */
 #define COMPRE_CAPTURE_HEADER_SIZE	(sizeof(struct snd_compr_audio_info))
@@ -393,6 +395,12 @@ static int msm_compr_playback_prepare(struct snd_pcm_substream *substream)
 	if (runtime->format == SNDRV_PCM_FORMAT_S24_LE)
 		bits_per_sample = 24;
 
+	if (htc_acoustic_query_feature(HTC_AUD_24BIT)) {
+		pr_info("%s: enable 24 bit Audio in POPP\n",
+			    __func__);
+		bits_per_sample = 24;
+	}
+
 	ret = q6asm_open_write_v2(prtd->audio_client,
 			compr->codec, bits_per_sample);
 	if (ret < 0) {
@@ -505,6 +513,12 @@ static int msm_compr_capture_prepare(struct snd_pcm_substream *substream)
 
 	if (runtime->format == SNDRV_PCM_FORMAT_S24_LE)
 		bits_per_sample = 24;
+
+	if (htc_acoustic_query_feature(HTC_AUD_24BIT)) {
+		pr_info("%s: enable 24 bit Audio in POPP\n",
+			    __func__);
+		bits_per_sample = 24;
+	}
 
 	if (!msm_compr_capture_codecs(
 				compr->info.codec_param.codec.id)) {

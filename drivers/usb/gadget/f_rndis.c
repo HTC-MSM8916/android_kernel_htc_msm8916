@@ -635,6 +635,9 @@ invalid:
 	return value;
 }
 
+extern int bam_adaptive_timer_enabled;
+extern int POLLING_MIN_SLEEP;
+extern int POLLING_MAX_SLEEP;
 
 static int rndis_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 {
@@ -696,6 +699,10 @@ static int rndis_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		rndis->port.cdc_filter = 0;
 
 		DBG(cdev, "RNDIS RX/TX early activation ... \n");
+		bam_adaptive_timer_enabled = 0;
+		POLLING_MIN_SLEEP = 950;
+		POLLING_MAX_SLEEP = 1050;
+		pr_info("%s: bam_adaptive_timer_enabled = %d POLLING_MIN_SLEEP = %d POLLING_MAX_SLEEP = %d\n", __func__, bam_adaptive_timer_enabled, POLLING_MIN_SLEEP, POLLING_MAX_SLEEP);
 		net = gether_connect(&rndis->port);
 		if (IS_ERR(net))
 			return PTR_ERR(net);
@@ -725,6 +732,9 @@ static void rndis_disable(struct usb_function *f)
 
 	usb_ep_disable(rndis->notify);
 	rndis->notify->driver_data = NULL;
+	bam_adaptive_timer_enabled = 1;
+	POLLING_MIN_SLEEP = 2950;
+	POLLING_MAX_SLEEP = 3050;
 }
 
 /*-------------------------------------------------------------------------*/

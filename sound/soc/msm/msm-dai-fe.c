@@ -680,6 +680,16 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min =     8000,
 			.rate_max =    48000,
 		},
+		.capture = {
+			.stream_name = "Primary MI2S_RX Hostless Capture",
+			.aif_name = "PRI_MI2S_UL_HL2",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min = 8000,
+			.rate_max = 48000,
+		},
 		.ops = &msm_fe_dai_ops,
 		.name = "PRI_MI2S_RX_HOSTLESS",
 		.probe = fe_dai_probe,
@@ -740,6 +750,18 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 			.rate_min = 8000,
 			.rate_max =    48000,
 		},
+#ifdef CONFIG_AUD_8x16_MI2S
+		.capture = {
+			.stream_name = "Quaternary MI2S_RX Hostless Capture",
+			.aif_name = "QUAT_MI2S_UL_HL2",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min =	8000,
+			.rate_max =    48000,
+		},
+#endif
 		.ops = &msm_fe_dai_ops,
 		.name = "QUAT_MI2S_RX_HOSTLESS",
 		.probe = fe_dai_probe,
@@ -1200,6 +1222,40 @@ static struct snd_soc_dai_driver msm_fe_dais[] = {
 		.name = "MultiMedia16",
 		.probe = fe_dai_probe,
 	},
+#ifdef CONFIG_AUD_8x16_MI2S
+	{
+		.playback = {
+			.stream_name = "MM_STUB Playback",
+			.aif_name = "MM_STUB_DL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min = 8000,
+			.rate_max = 48000,
+		},
+		.ops = &msm_fe_dai_ops,
+		.name = "MM_STUB",
+		.probe = fe_dai_probe,
+	},
+#endif
+#if defined(CONFIG_MACH_DUMMY) || defined(CONFIG_MACH_A31_UL)
+	{
+		.playback = {
+			.stream_name = "MM_STUB Playback",
+			.aif_name = "MM_STUB_DL",
+			.rates = SNDRV_PCM_RATE_8000_48000,
+			.formats = SNDRV_PCM_FMTBIT_S16_LE,
+			.channels_min = 1,
+			.channels_max = 2,
+			.rate_min = 8000,
+			.rate_max = 48000,
+		},
+		.ops = &msm_fe_dai_ops,
+		.name = "MM_STUB",
+		.probe = fe_dai_probe,
+	},
+#endif
 };
 
 static int msm_fe_dai_dev_probe(struct platform_device *pdev)

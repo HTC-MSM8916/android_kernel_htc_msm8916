@@ -21,6 +21,7 @@
 #include <linux/usb/composite.h>
 #include <asm/unaligned.h>
 
+void mfg_check_white_line(void);
 /*
  * The code in this file is utility code, used to build a gadget driver
  * from one or more "function" drivers, one or more "configuration"
@@ -34,6 +35,34 @@ static struct usb_gadget_strings **get_containers_gs(
 	return (struct usb_gadget_strings **)uc->stash;
 }
 
+#define REQUEST_RESET_DELAYED (HZ / 10)
+static int usb_autobot_mode(void);
+static void mtp_update_mode(int _mac_mtp_mode);
+static void fsg_update_mode(int _linux_fsg_mode);
+static bool is_mtp_enable(void);
+void usb_composite_force_reset(struct usb_composite_dev *cdev);
+static void composite_request_reset(struct work_struct *w)
+{
+	struct usb_composite_dev *cdev = container_of(
+			(struct delayed_work *)w,
+			struct usb_composite_dev, request_reset);
+	if (cdev) {
+		if (usb_autobot_mode() || board_mfg_mode())
+			return;
+
+		INFO(cdev, "%s\n", __func__);
+		printk(KERN_WARNING "%s(%d):os_type=%d, mtp=%d\n",
+				__func__, __LINE__, os_type, is_mtp_enable());
+		if (os_type == OS_LINUX && is_mtp_enable())
+			fsg_update_mode(1);
+		else {
+			fsg_update_mode(0);
+			return;
+		}
+		composite_disconnect(cdev->gadget);
+		usb_composite_force_reset(cdev);
+	}
+}
 /**
  * next_ep_desc() - advance to the next EP descriptor
  * @t: currect pointer within descriptor array
@@ -161,6 +190,23 @@ ep_found:
 	return 0;
 }
 EXPORT_SYMBOL_GPL(config_ep_by_speed);
+
+void usb_composite_force_reset(struct usb_composite_dev *cdev)
+{
+	unsigned long			flags;
+
+	spin_lock_irqsave(&cdev->lock, flags);
+
+	if (cdev && cdev->gadget && cdev->gadget->speed != USB_SPEED_UNKNOWN) {
+		spin_unlock_irqrestore(&cdev->lock, flags);
+
+		usb_gadget_disconnect(cdev->gadget);
+		msleep(500);
+		usb_gadget_connect(cdev->gadget);
+	} else {
+		spin_unlock_irqrestore(&cdev->lock, flags);
+	}
+}
 
 /**
  * usb_add_function() - add a function to a configuration
@@ -994,7 +1040,10 @@ void usb_remove_config(struct usb_composite_dev *cdev,
 	list_del(&config->list);
 
 	spin_unlock_irqrestore(&cdev->lock, flags);
-
+	if (os_type != OS_LINUX) {
+		os_type = OS_NOT_YET;
+		fsg_update_mode(0);
+	}
 	unbind_config(cdev, config);
 }
 
@@ -1422,6 +1471,23 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 				break;
 			/* FALLTHROUGH */
 		case USB_DT_CONFIG:
+			if (w_length == 4) {
+				printk(KERN_WARNING "%s: OS_MAC\n", __func__);
+				os_type = OS_MAC;
+				mtp_update_mode(1);
+			} else if (w_length == 255) {
+				printk(KERN_WARNING "%s: OS_WINDOWS\n", __func__);
+				os_type = OS_WINDOWS;
+			} else if (w_length == 9 && os_type != OS_WINDOWS) {
+				printk(KERN_WARNING "%s: OS_LINUX:(%d)\n", __func__, os_type);
+				if (os_type != OS_LINUX) {
+					os_type = OS_LINUX;
+					schedule_delayed_work(
+						&cdev->request_reset,
+						REQUEST_RESET_DELAYED);
+				}
+			}
+
 			value = config_desc(cdev, w_value);
 			if (value >= 0)
 				value = min(w_length, (u16) value);
@@ -1438,6 +1504,7 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 						USB_DT_OTG);
 			break;
 		case USB_DT_STRING:
+			mfg_check_white_line();
 			value = get_string(cdev, req->buf,
 					w_index, w_value & 0xff);
 			if (value >= 0)
@@ -1672,8 +1739,6 @@ void composite_disconnect(struct usb_gadget *gadget)
 	spin_lock_irqsave(&cdev->lock, flags);
 	if (cdev->config)
 		reset_config(cdev);
-	if (cdev->driver->disconnect)
-		cdev->driver->disconnect(cdev);
 	if (cdev->delayed_status != 0) {
 		INFO(cdev, "delayed status mismatch..resetting\n");
 		cdev->delayed_status = 0;
@@ -1790,6 +1855,7 @@ int composite_dev_prepare(struct usb_composite_driver *composite,
 
 	cdev->driver = composite;
 
+	INIT_DELAYED_WORK(&cdev->request_reset, composite_request_reset);
 	/*
 	 * As per USB compliance update, a device that is actively drawing
 	 * more than 100mA from USB must report itself as bus-powered in

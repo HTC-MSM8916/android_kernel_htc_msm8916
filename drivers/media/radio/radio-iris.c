@@ -2868,7 +2868,7 @@ static inline void hci_ev_radio_text(struct radio_hci_dev *hdev,
 
 	while ((skb->data[len+RDS_OFFSET] != 0x0d) && (len < MAX_RT_LENGTH))
 		len++;
-	data = kmalloc(len+RDS_OFFSET, GFP_ATOMIC);
+	data = kmalloc(len+RDS_OFFSET+1, GFP_ATOMIC);
 	if (!data) {
 		FMDERR("Failed to allocate memory");
 		return;
@@ -2883,7 +2883,7 @@ static inline void hci_ev_radio_text(struct radio_hci_dev *hdev,
 	memcpy(data+RDS_OFFSET, &skb->data[RDS_OFFSET], len);
 	data[len+RDS_OFFSET] = 0x00;
 
-	iris_q_evt_data(radio, data, len+RDS_OFFSET, IRIS_BUF_RT_RDS);
+	iris_q_evt_data(radio, data, len+RDS_OFFSET+1, IRIS_BUF_RT_RDS);
 
 	kfree(data);
 }
@@ -5465,7 +5465,7 @@ static int iris_remove(struct platform_device *pdev)
 {
 	int i;
 	struct iris_device *radio = platform_get_drvdata(pdev);
-
+	FMDERR(" remove FM iris");
 	if (radio == NULL) {
 		FMDERR(":radio is null");
 		return -EINVAL;
@@ -5504,7 +5504,9 @@ module_init(iris_radio_init);
 
 static void __exit iris_radio_exit(void)
 {
+	FMDERR(" deregister FM iris");
 	platform_driver_unregister(&iris_driver);
+	FMDERR(" deregister FM iris complete!!");
 }
 module_exit(iris_radio_exit);
 

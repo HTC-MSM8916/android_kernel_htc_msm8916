@@ -2185,6 +2185,213 @@ static int msm8x16_wcd_ext_spk_boost_set(struct snd_kcontrol *kcontrol,
 		__func__, msm8x16_wcd->spk_boost_set);
 	return 0;
 }
+static int msm8x16_wcd_ADC1_gain_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	u8 adc_gain;
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+
+	dev_dbg(codec->dev, "%s: ucontrol->value.integer.value[0] = %ld\n",
+		__func__, ucontrol->value.integer.value[0]);
+
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		adc_gain = 0x00;
+		break;
+	case 1:
+		adc_gain = 0x10;
+		break;
+	case 2:
+		adc_gain = 0x20;
+		break;
+	case 3:
+		adc_gain = 0x30;
+		break;
+	case 4:
+		adc_gain = 0x38;
+		break;
+	case 5:
+		adc_gain = 0x40;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_TX_1_EN,
+			    0x78, adc_gain);
+	return 0;
+}
+
+static int msm8x16_wcd_ADC2_gain_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	u8 adc_gain;
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+
+	dev_dbg(codec->dev, "%s: ucontrol->value.integer.value[0] = %ld\n",
+		__func__, ucontrol->value.integer.value[0]);
+
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		adc_gain = 0x00;
+		break;
+	case 1:
+		adc_gain = 0x10;
+		break;
+	case 2:
+		adc_gain = 0x20;
+		break;
+	case 3:
+		adc_gain = 0x30;
+		break;
+	case 4:
+		adc_gain = 0x38;
+		break;
+	case 5:
+		adc_gain = 0x40;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_TX_2_EN,
+			    0x78, adc_gain);
+	return 0;
+}
+
+static int msm8x16_wcd_ADC3_gain_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	u8 adc_gain;
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+
+	dev_dbg(codec->dev, "%s: ucontrol->value.integer.value[0] = %ld\n",
+		__func__, ucontrol->value.integer.value[0]);
+
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		adc_gain = 0x00;
+		break;
+	case 1:
+		adc_gain = 0x10;
+		break;
+	case 2:
+		adc_gain = 0x20;
+		break;
+	case 3:
+		adc_gain = 0x30;
+		break;
+	case 4:
+		adc_gain = 0x38;
+		break;
+	case 5:
+		adc_gain = 0x40;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_TX_3_EN,
+			    0x78, adc_gain);
+	return 0;
+}
+
+static int msm8x16_wcd_ADC1_gain_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	u8 adc_gain;
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+
+	adc_gain = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_TX_1_EN);
+
+	adc_gain = (adc_gain >> 3) & 0x0F;
+
+	if (adc_gain == 0x00) {
+		ucontrol->value.integer.value[0] = 0;
+	} else if (adc_gain == 0x02) {
+		ucontrol->value.integer.value[0] = 1;
+	} else if (adc_gain == 0x04) {
+		ucontrol->value.integer.value[0] = 2;
+	} else if (adc_gain == 0x06) {
+		ucontrol->value.integer.value[0] = 3;
+	} else if (adc_gain == 0x07) {
+		ucontrol->value.integer.value[0] = 4;
+	} else if (adc_gain == 0x08) {
+		ucontrol->value.integer.value[0] = 5;
+	} else  {
+		dev_err(codec->dev, "%s: ERROR: Unsupported adc Gain = 0x%x\n",
+			__func__, adc_gain);
+		return -EINVAL;
+	}
+
+	dev_dbg(codec->dev, "%s: adc_gain = 0x%x\n", __func__, adc_gain);
+	return 0;
+}
+
+static int msm8x16_wcd_ADC2_gain_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	u8 adc_gain;
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+
+	adc_gain = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_TX_2_EN);
+
+	adc_gain = (adc_gain >> 3) & 0x0F;
+
+	if (adc_gain == 0x00) {
+		ucontrol->value.integer.value[0] = 0;
+	} else if (adc_gain == 0x02) {
+		ucontrol->value.integer.value[0] = 1;
+	} else if (adc_gain == 0x04) {
+		ucontrol->value.integer.value[0] = 2;
+	} else if (adc_gain == 0x06) {
+		ucontrol->value.integer.value[0] = 3;
+	} else if (adc_gain == 0x07) {
+		ucontrol->value.integer.value[0] = 4;
+	} else if (adc_gain == 0x08) {
+		ucontrol->value.integer.value[0] = 5;
+	} else  {
+		dev_err(codec->dev, "%s: ERROR: Unsupported adc Gain = 0x%x\n",
+			__func__, adc_gain);
+		return -EINVAL;
+	}
+
+	dev_dbg(codec->dev, "%s: adc_gain = 0x%x\n", __func__, adc_gain);
+	return 0;
+}
+
+static int msm8x16_wcd_ADC3_gain_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	u8 adc_gain;
+	struct snd_soc_codec *codec = snd_kcontrol_chip(kcontrol);
+
+	adc_gain = snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_TX_3_EN);
+
+	adc_gain = (adc_gain >> 3) & 0x0F;
+
+	if (adc_gain == 0x00) {
+		ucontrol->value.integer.value[0] = 0;
+	} else if (adc_gain == 0x02) {
+		ucontrol->value.integer.value[0] = 1;
+	} else if (adc_gain == 0x04) {
+		ucontrol->value.integer.value[0] = 2;
+	} else if (adc_gain == 0x06) {
+		ucontrol->value.integer.value[0] = 3;
+	} else if (adc_gain == 0x07) {
+		ucontrol->value.integer.value[0] = 4;
+	} else if (adc_gain == 0x08) {
+		ucontrol->value.integer.value[0] = 5;
+	} else  {
+		dev_err(codec->dev, "%s: ERROR: Unsupported adc Gain = 0x%x\n",
+			__func__, adc_gain);
+		return -EINVAL;
+	}
+
+	dev_dbg(codec->dev, "%s: adc_gain = 0x%x\n", __func__, adc_gain);
+	return 0;
+}
+
 static int msm8x16_wcd_get_iir_enable_audio_mixer(
 					struct snd_kcontrol *kcontrol,
 					struct snd_ctl_elem_value *ucontrol)
@@ -2400,6 +2607,12 @@ static const struct soc_enum msm8x16_wcd_ear_pa_gain_enum[] = {
 		SOC_ENUM_SINGLE_EXT(2, msm8x16_wcd_ear_pa_gain_text),
 };
 
+static const char * const msm8x16_wcd_ADC_gain_text[] = {
+		"G_0_DB", "G_6_DB", "G_12_DB", "G_18_DB", "G_21_DB", "G_24_DB"};
+static const struct soc_enum msm8x16_wcd_ADC_gain_enum[] = {
+		SOC_ENUM_SINGLE_EXT(6, msm8x16_wcd_ADC_gain_text),
+};
+
 static const char * const msm8x16_wcd_boost_option_ctrl_text[] = {
 		"BOOST_SWITCH", "BOOST_ALWAYS", "BYPASS_ALWAYS",
 		"BOOST_ON_FOREVER"};
@@ -2448,6 +2661,12 @@ static const struct snd_kcontrol_new msm8x16_wcd_snd_controls[] = {
 
 	SOC_ENUM_EXT("EAR PA Gain", msm8x16_wcd_ear_pa_gain_enum[0],
 		msm8x16_wcd_pa_gain_get, msm8x16_wcd_pa_gain_put),
+	SOC_ENUM_EXT("ADC1 Gain", msm8x16_wcd_ADC_gain_enum[0],
+		msm8x16_wcd_ADC1_gain_get, msm8x16_wcd_ADC1_gain_put),
+	SOC_ENUM_EXT("ADC2 Gain", msm8x16_wcd_ADC_gain_enum[0],
+		msm8x16_wcd_ADC2_gain_get, msm8x16_wcd_ADC2_gain_put),
+	SOC_ENUM_EXT("ADC3 Gain", msm8x16_wcd_ADC_gain_enum[0],
+		msm8x16_wcd_ADC3_gain_get, msm8x16_wcd_ADC3_gain_put),
 
 	SOC_ENUM_EXT("Speaker Boost", msm8x16_wcd_spk_boost_ctl_enum[0],
 		msm8x16_wcd_spk_boost_get, msm8x16_wcd_spk_boost_set),
@@ -3350,6 +3569,7 @@ static int msm8x16_wcd_enable_ext_mb_source(struct snd_soc_codec *codec,
 
 	dev_dbg(codec->dev, "%s turn_on: %d count: %d\n", __func__, turn_on,
 			count);
+	mutex_lock(&codec->card->dapm_mutex);
 	if (turn_on) {
 		if (!count) {
 			ret = snd_soc_dapm_force_enable_pin(&codec->dapm,
@@ -3366,6 +3586,7 @@ static int msm8x16_wcd_enable_ext_mb_source(struct snd_soc_codec *codec,
 			snd_soc_dapm_sync(&codec->dapm);
 		}
 	}
+	mutex_unlock(&codec->card->dapm_mutex);
 
 	if (ret)
 		dev_err(codec->dev, "%s: Failed to %s external micbias source\n",
@@ -3381,14 +3602,18 @@ static int msm8x16_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *kcontrol, int event)
 {
 	struct snd_soc_codec *codec = w->codec;
+#ifndef CONFIG_HTC_AUD_MBHC
 	struct msm8x16_wcd_priv *msm8x16_wcd =
 				snd_soc_codec_get_drvdata(codec);
+#endif
 	u16 micb_int_reg;
 	char *internal1_text = "Internal1";
 	char *internal2_text = "Internal2";
 	char *internal3_text = "Internal3";
+#ifndef CONFIG_HTC_AUD_MBHC
 	char *external2_text = "External2";
 	char *external_text = "External";
+#endif
 	bool micbias2;
 
 	dev_dbg(codec->dev, "%s %d\n", __func__, event);
@@ -3405,6 +3630,47 @@ static int msm8x16_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 	}
 
 	micbias2 = (snd_soc_read(codec, MSM8X16_WCD_A_ANALOG_MICB_2_EN) & 0x80);
+#ifdef CONFIG_HTC_AUD_MBHC
+	switch (event) {
+	case SND_SOC_DAPM_PRE_PMU:
+		if (strnstr(w->name, internal1_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0x80, 0x80);
+		} else if (strnstr(w->name, internal2_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0x10, 0x10);
+			snd_soc_update_bits(codec, w->reg, 0x60, 0x00);
+		} else if (strnstr(w->name, internal3_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0x2, 0x2);
+		}
+		snd_soc_update_bits(codec,
+				MSM8X16_WCD_A_ANALOG_MICB_1_EN, 0x05, 0x04);
+
+		break;
+	case SND_SOC_DAPM_POST_PMU:
+		usleep_range(20000, 20100);
+		if (strnstr(w->name, internal1_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0x40, 0x40);
+		} else if (strnstr(w->name, internal2_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0x08, 0x08);
+			msm8x16_notifier_call(codec,
+					WCD_EVENT_PRE_MICBIAS_2_ON);
+		} else if (strnstr(w->name, internal3_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0x01, 0x01);
+		}
+		break;
+	case SND_SOC_DAPM_POST_PMD:
+		if (strnstr(w->name, internal1_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0xC0, 0x40);
+		} else if (strnstr(w->name, internal2_text, 30)) {
+			msm8x16_notifier_call(codec,
+					WCD_EVENT_PRE_MICBIAS_2_OFF);
+		} else if (strnstr(w->name, internal3_text, 30)) {
+			snd_soc_update_bits(codec, micb_int_reg, 0x2, 0x0);
+		}
+		snd_soc_update_bits(codec, MSM8X16_WCD_A_ANALOG_MICB_1_EN,
+				0x45, 0x41);
+		break;
+	}
+#else
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
 		if (strnstr(w->name, internal1_text, strlen(w->name))) {
@@ -3462,6 +3728,8 @@ static int msm8x16_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 			msm8x16_wcd_configure_cap(codec, false, micbias2);
 		break;
 	}
+#endif
+
 	return 0;
 }
 
@@ -4245,6 +4513,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"MIC BIAS Internal2", NULL, "MICBIAS_REGULATOR"},
 	{"MIC BIAS External", NULL, "MICBIAS_REGULATOR"},
 	{"MIC BIAS External2", NULL, "MICBIAS_REGULATOR"},
+	{"MIC BIAS Internal3", NULL, "MICBIAS_REGULATOR"},
 };
 
 static int msm8x16_wcd_startup(struct snd_pcm_substream *substream,
@@ -5960,4 +6229,3 @@ module_exit(msm8x16_wcd_codec_exit);
 MODULE_DESCRIPTION("MSM8x16 Audio codec driver");
 MODULE_LICENSE("GPL v2");
 MODULE_DEVICE_TABLE(of, msm8x16_wcd_spmi_id_table);
-

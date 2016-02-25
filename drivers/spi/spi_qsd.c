@@ -2704,6 +2704,11 @@ static int msm_spi_probe(struct platform_device *pdev)
 	for (i = 0; i < ARRAY_SIZE(spi_cs_rsrcs); ++i)
 		dd->cs_gpios[i].valid = 0;
 
+	if (!pdata) {
+		rc = -EINVAL;
+		goto err_probe_res;
+	}
+
 	dd->pdata = pdata;
 	resource = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!resource) {

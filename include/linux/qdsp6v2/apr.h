@@ -160,6 +160,7 @@ inline int apr_fill_hdr(void *handle, uint32_t *buf, uint16_t src_port,
 			uint32_t token, uint32_t opcode, uint16_t len);
 
 int apr_send_pkt(void *handle, uint32_t *buf);
+int apr_deregister_port(void *handle, uint32_t port);
 int apr_deregister(void *handle);
 void subsys_notif_register(struct notifier_block *mod_notif,
 				struct notifier_block *lp_notif);

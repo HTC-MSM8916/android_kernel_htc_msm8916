@@ -24,8 +24,8 @@
 #define PC_TEMP_ROWS		31
 #define PC_TEMP_COLS		8
 
-#define ACC_IBAT_ROWS		4
-#define ACC_TEMP_COLS		3
+#define ACC_IBAT_ROWS		5
+#define ACC_TEMP_COLS		7
 
 #define MAX_SINGLE_LUT_COLS	20
 
@@ -137,6 +137,10 @@ struct bms_battery_data {
 	int			cutoff_uv;
 	int			iterm_ua;
 	int			batt_id_kohm;
+	int			vddmax_mv;
+	int			coolmax_mv;
+	int			warmmax_mv;
+	bool		batt_disabled_by_sw;
 	const char		*battery_type;
 };
 

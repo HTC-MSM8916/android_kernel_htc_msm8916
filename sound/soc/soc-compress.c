@@ -748,6 +748,19 @@ static int sst_compr_get_metadata(struct snd_compr_stream *cstream,
 
 	return ret;
 }
+
+#ifdef CONFIG_HTC_AUD_SRS_ENABLE
+static int soc_compr_config_effect(struct snd_compr_stream *cstream, void *data, void *payload)
+{
+	struct snd_soc_pcm_runtime *rtd = cstream->private_data;
+	struct snd_soc_platform *platform = rtd->platform;
+	int ret = 0;
+	if (platform->driver->compr_ops && platform->driver->compr_ops->config_effect)
+		ret = platform->driver->compr_ops->config_effect(cstream, data, payload);
+	return ret;
+}
+#endif /* CONFIG_HTC_AUD_SRS_ENABLE */
+
 /* ASoC Compress operations */
 static struct snd_compr_ops soc_compr_ops = {
 	.open			= soc_compr_open,
@@ -761,7 +774,10 @@ static struct snd_compr_ops soc_compr_ops = {
 	.pointer		= soc_compr_pointer,
 	.ack			= soc_compr_ack,
 	.get_caps		= soc_compr_get_caps,
-	.get_codec_caps		= soc_compr_get_codec_caps
+	.get_codec_caps		= soc_compr_get_codec_caps,
+#ifdef CONFIG_HTC_AUD_SRS_ENABLE
+	.config_effect = soc_compr_config_effect
+#endif
 };
 
 /* ASoC Dynamic Compress operations */
@@ -777,7 +793,10 @@ static struct snd_compr_ops soc_compr_dyn_ops = {
 	.pointer		= soc_compr_pointer,
 	.ack			= soc_compr_ack,
 	.get_caps		= soc_compr_get_caps,
-	.get_codec_caps		= soc_compr_get_codec_caps
+	.get_codec_caps		= soc_compr_get_codec_caps,
+#ifdef CONFIG_HTC_AUD_SRS_ENABLE
+	.config_effect = soc_compr_config_effect
+#endif
 };
 
 /* create a new compress */

@@ -465,10 +465,12 @@ struct i2c_msm_resources {
 	struct pinctrl              *pinctrl;
 	struct pinctrl_state        *gpio_state_active;
 	struct pinctrl_state        *gpio_state_suspend;
+	struct pinctrl_state        *gpio_state_recovery;
 };
 
 #define I2C_MSM_PINCTRL_ACTIVE       "i2c_active"
 #define I2C_MSM_PINCTRL_SUSPEND      "i2c_sleep"
+#define I2C_MSM_PINCTRL_RECOVERY      "i2c_recovery"
 
 /*
  * i2c_msm_xfer_buf: current xfer position and preprocessed tags
@@ -587,8 +589,14 @@ struct i2c_msm_ctrl {
 	struct i2c_msm_xfer        xfer;
 	struct i2c_msm_dbgfs       dbgfs;
 	struct i2c_msm_resources   rsrcs;
+	int                        scl_gpio;
+	int                        sda_gpio;
+	int                        recover_clk_cnt;
 	u32                        mstr_clk_ctl;
 	enum i2c_msm_power_state   pwr_state;
+
+	u32                        dt_to_fs_div;
+	u32                        dt_to_ht_div;
 };
 
 /* Enum for the profiling event types */

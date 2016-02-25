@@ -21,6 +21,7 @@
 #include <linux/leds.h>
 #include <linux/qpnp/pwm.h>
 #include <linux/err.h>
+#include <mach/debug_display.h>
 
 #include "mdss_dsi.h"
 
@@ -176,6 +177,32 @@ static void mdss_dsi_panel_cmds_send(struct mdss_dsi_ctrl_pdata *ctrl,
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
 }
 
+#define BRI_SETTING_MIN                 30
+#define BRI_SETTING_DEF                 142
+#define BRI_SETTING_MAX                 255
+
+static unsigned char shrink_pwm(int val, int pwm_min, int pwm_default, int pwm_max)
+{
+        unsigned char shrink_br = BRI_SETTING_MAX;
+
+        if (val <= 0) {
+                shrink_br = 0;
+        } else if (val > 0 && (val < BRI_SETTING_MIN)) {
+                shrink_br = pwm_min;
+        } else if ((val >= BRI_SETTING_MIN) && (val <= BRI_SETTING_DEF)) {
+                shrink_br = (val - BRI_SETTING_MIN) * (pwm_default - pwm_min) /
+                (BRI_SETTING_DEF - BRI_SETTING_MIN) + pwm_min;
+        } else if (val > BRI_SETTING_DEF && val <= BRI_SETTING_MAX) {
+                shrink_br = (val - BRI_SETTING_DEF) * (pwm_max - pwm_default) /
+                (BRI_SETTING_MAX - BRI_SETTING_DEF) + pwm_default;
+        } else if (val > BRI_SETTING_MAX)
+                shrink_br = pwm_max;
+
+        PR_DISP_INFO("brightness orig=%d, transformed=%d\n", val, shrink_br);
+
+        return shrink_br;
+}
+
 static char led_pwm1[2] = {0x51, 0x0};	/* DTYPE_DCS_WRITE1 */
 static struct dsi_cmd_desc backlight_cmd = {
 	{DTYPE_DCS_WRITE1, 1, 0, 0, 1, sizeof(led_pwm1)},
@@ -195,7 +222,7 @@ static void mdss_dsi_panel_bklt_dcs(struct mdss_dsi_ctrl_pdata *ctrl, int level)
 
 	pr_debug("%s: level=%d\n", __func__, level);
 
-	led_pwm1[1] = (unsigned char)level;
+	led_pwm1[1] = (unsigned char)shrink_pwm(level, ctrl->pwm_min, ctrl->pwm_default, ctrl->pwm_max);
 
 	memset(&cmdreq, 0, sizeof(cmdreq));
 	cmdreq.cmds = &backlight_cmd;
@@ -506,6 +533,8 @@ end:
 	return 0;
 }
 
+extern struct mdss_dsi_pwrctrl pwrctrl_pdata;
+
 static void mdss_dsi_panel_switch_mode(struct mdss_panel_data *pdata,
 							int mode)
 {
@@ -559,6 +588,9 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 	if ((bl_level < pdata->panel_info.bl_min) && (bl_level != 0))
 		bl_level = pdata->panel_info.bl_min;
 
+	if(pwrctrl_pdata.bkl_config)
+		pwrctrl_pdata.bkl_config(&ctrl_pdata->panel_data, ((bl_level == 0) ? 0 : 1));
+
 	switch (ctrl_pdata->bklt_ctrl) {
 	case BL_WLED:
 		led_trigger_event(bl_led_trigger, bl_level);
@@ -597,6 +629,17 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 	}
 }
 
+static void mdss_dsi_display_on(struct mdss_panel_data *pdata)
+{
+	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
+
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+					panel_data);
+
+	PR_DISP_INFO("%s: pid=%d\n", __func__, current->pid);
+	mdss_dsi_panel_cmds_send(ctrl, &ctrl->display_on_cmds);
+}
+
 static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 {
 	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
@@ -618,6 +661,8 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 			goto end;
 	}
 
+	if (pdata->panel_info.first_power_on == 1)
+		pr_info("%s: panel on already\n", __func__);
 	if (ctrl->on_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->on_cmds);
 
@@ -683,6 +728,9 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 		if (ctrl->ndx != DSI_CTRL_LEFT)
 			goto end;
 	}
+
+	if (pwrctrl_pdata.bkl_config)
+		pwrctrl_pdata.bkl_config(&ctrl->panel_data, 0);
 
 	if (ctrl->off_cmds.cmd_cnt)
 		mdss_dsi_panel_cmds_send(ctrl, &ctrl->off_cmds);
@@ -1462,7 +1510,7 @@ static void mdss_dsi_set_lane_clamp_mask(struct mipi_panel_info *mipi)
 static int mdss_panel_parse_dt(struct device_node *np,
 			struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
-	u32 tmp;
+	u32 tmp, res[6];
 	int rc, i, len;
 	const char *data;
 	static const char *pdest;
@@ -1782,6 +1830,56 @@ static int mdss_panel_parse_dt(struct device_node *np,
 	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->off_cmds,
 		"qcom,mdss-dsi-off-command", "qcom,mdss-dsi-off-command-state");
 
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->display_on_cmds,
+		"qcom,display-on-cmds", "qcom,mdss-dsi-default-command-state");
+
+	rc = of_property_read_u32_array(np, "qcom,mdss-shrink-pwm", res, 3);
+	if (rc) {
+		pr_err("%s:%d, panel dimension not specified\n",
+						 __func__, __LINE__);
+	}
+	ctrl_pdata->pwm_min  = (!rc ? res[0] : BRI_SETTING_MIN);
+	ctrl_pdata->pwm_default = (!rc ? res[1] : BRI_SETTING_DEF);
+	ctrl_pdata->pwm_max = (!rc ? res[2] : BRI_SETTING_MAX);
+
+	rc = of_property_read_u32(np, "htc,panel-id", &tmp);
+	pinfo->panel_id = (!rc ? tmp : 0);
+
+	rc = of_property_read_u32(np, "htc,mdss-camera-blk", &tmp);
+	pinfo->camera_blk = (!rc ? tmp : BRI_SETTING_DEF);
+
+	rc = of_property_read_u32(np, "htc,mdss-pp-hue", &tmp);
+	pinfo->mdss_pp_hue = (!rc ? tmp : 0);
+
+	pinfo->skip_frame = of_property_read_bool(np, "htc,skip-frame");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->cabc_off_cmds,
+		"htc,cabc-off-cmds", "qcom,mdss-dsi-default-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->cabc_ui_cmds,
+		"htc,cabc-ui-cmds", "qcom,mdss-dsi-default-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->cabc_video_cmds,
+		"htc,cabc-video-cmds", "qcom,mdss-dsi-default-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->dimming_on_cmds,
+		"htc,dimming-on-cmds", "qcom,mdss-dsi-default-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->dimming_off_cmds,
+		"htc,dimming-off-cmds", "qcom,mdss-dsi-default-command-state");
+
+	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->dimming_switch_cmds,
+		"htc,dimming-switch-cmds", "qcom,mdss-dsi-default-command-state");
+
+	rc = of_property_read_u32(np, "htc,mdp-pcc-r", &tmp);
+	pinfo->pcc_r = (!rc ? tmp : 0);
+
+	rc = of_property_read_u32(np, "htc,mdp-pcc-g", &tmp);
+	pinfo->pcc_g = (!rc ? tmp : 0);
+
+	rc = of_property_read_u32(np, "htc,mdp-pcc-b", &tmp);
+	pinfo->pcc_b = (!rc ? tmp : 0);
+
 	mdss_dsi_parse_dcs_cmds(np, &ctrl_pdata->status_cmds,
 			"qcom,mdss-dsi-panel-status-command",
 				"qcom,mdss-dsi-panel-status-command-state");
@@ -1870,6 +1968,9 @@ int mdss_dsi_panel_init(struct device_node *node,
 	mdss_dsi_set_lane_clamp_mask(&pinfo->mipi);
 	if (!cmd_cfg_cont_splash)
 		pinfo->cont_splash_enabled = false;
+
+	ctrl_pdata->panel_data.panel_info.first_power_on = pinfo->cont_splash_enabled;
+
 	pr_info("%s: Continuous splash %s\n", __func__,
 		pinfo->cont_splash_enabled ? "enabled" : "disabled");
 
@@ -1882,6 +1983,7 @@ int mdss_dsi_panel_init(struct device_node *node,
 	ctrl_pdata->off = mdss_dsi_panel_off;
 	ctrl_pdata->low_power_config = mdss_dsi_panel_low_power_config;
 	ctrl_pdata->panel_data.set_backlight = mdss_dsi_panel_bl_ctrl;
+	ctrl_pdata->panel_data.display_on = mdss_dsi_display_on;
 	ctrl_pdata->switch_mode = mdss_dsi_panel_switch_mode;
 
 	return 0;

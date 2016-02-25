@@ -2224,6 +2224,7 @@ __acquires(&pool->lock)
 	/* we're done with it, release */
 	hash_del(&worker->hentry);
 	worker->current_work = NULL;
+	worker->previous_work = work;
 	worker->current_func = NULL;
 	worker->current_pwq = NULL;
 	worker->desc_valid = false;

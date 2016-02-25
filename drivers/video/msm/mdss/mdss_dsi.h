@@ -276,6 +276,14 @@ struct panel_horizontal_idle {
 	int idle;
 };
 
+struct mdss_dsi_pwrctrl {
+	int (*dsi_regulator_init) (struct platform_device *pdev);
+	int (*dsi_regulator_deinit) (struct platform_device *pdev);
+	int (*dsi_power_on) (struct mdss_panel_data *pdata, int enable);
+	void (*dsi_panel_reset) (struct mdss_panel_data *pdata, int enable);
+	void (*bkl_config) (struct mdss_panel_data *pdata, int enable);
+};
+
 enum {
 	DSI_CTRL_0,
 	DSI_CTRL_1,
@@ -374,6 +382,8 @@ struct mdss_dsi_ctrl_pdata {
 	struct dsi_panel_cmds post_dms_on_cmds;
 	struct dsi_panel_cmds post_panel_on_cmds;
 	struct dsi_panel_cmds off_cmds;
+	struct dsi_panel_cmds display_on_cmds;
+
 	struct dsi_panel_cmds status_cmds;
 	u32 status_cmds_rlen;
 	u32 status_value;
@@ -418,6 +428,20 @@ struct mdss_dsi_ctrl_pdata {
 	int horizontal_idle_cnt;
 	struct panel_horizontal_idle *line_idle;
 	struct mdss_util_intf *mdss_util;
+
+	void (*display_on) (struct mdss_panel_data *pdata);
+	void *dsi_pwrctrl_data;
+
+	int pwm_min;
+	int pwm_default;
+	int pwm_max;
+
+	struct dsi_panel_cmds cabc_off_cmds;
+	struct dsi_panel_cmds cabc_ui_cmds;
+	struct dsi_panel_cmds cabc_video_cmds;
+	struct dsi_panel_cmds dimming_on_cmds;
+	struct dsi_panel_cmds dimming_off_cmds;
+	struct dsi_panel_cmds dimming_switch_cmds;
 };
 
 struct dsi_status_data {

@@ -104,6 +104,10 @@ static struct ion_heap_desc ion_heap_meta[] = {
 	{
 		.id	= ION_ADSP_HEAP_ID,
 		.name	= ION_ADSP_HEAP_NAME,
+	},
+	{
+		.id	= ION_FBMEM_HEAP_ID,
+		.name	= ION_FBMEM_HEAP_NAME,
 	}
 };
 #endif
@@ -141,6 +145,43 @@ int msm_ion_do_cache_op(struct ion_client *client, struct ion_handle *handle,
 	return ion_do_cache_op(client, handle, vaddr, 0, len, cmd);
 }
 EXPORT_SYMBOL(msm_ion_do_cache_op);
+
+static atomic_t ion_alloc_mem_usages[ION_USAGE_MAX]
+			= {[0 ... ION_USAGE_MAX-1] = ATOMIC_INIT(0)};
+
+static inline atomic_t* ion_get_meminfo(const enum ion_heap_mem_usage usage)
+{
+	return (usage < ION_USAGE_MAX) ?
+			&ion_alloc_mem_usages[usage] : NULL;
+}
+
+void ion_alloc_inc_usage(const enum ion_heap_mem_usage usage,
+			 const size_t size)
+{
+	atomic_t * const ion_alloc_usage = ion_get_meminfo(usage);
+
+	if (ion_alloc_usage)
+		atomic_add(size, ion_alloc_usage);
+}
+EXPORT_SYMBOL(ion_alloc_inc_usage);
+
+void ion_alloc_dec_usage(const enum ion_heap_mem_usage usage,
+			 const size_t size)
+{
+	atomic_t * const ion_alloc_usage = ion_get_meminfo(usage);
+
+	if (ion_alloc_usage)
+		atomic_sub(size, ion_alloc_usage);
+}
+EXPORT_SYMBOL(ion_alloc_dec_usage);
+
+uintptr_t msm_ion_heap_meminfo(const bool is_total)
+{
+	atomic_t * const ion_alloc_usage = ion_get_meminfo(
+						is_total? ION_TOTAL : ION_IN_USE);
+	return ion_alloc_usage? atomic_read(ion_alloc_usage) * PAGE_SIZE : 0;
+}
+EXPORT_SYMBOL(msm_ion_heap_meminfo);
 
 static int ion_no_pages_cache_ops(struct ion_client *client,
 			struct ion_handle *handle,
@@ -476,7 +517,6 @@ static int msm_ion_get_heap_size(struct device_node *node,
 			goto out;
 		}
 		heap->size = (u32) size;
-		ret = 0;
 		of_node_put(pnode);
 	}
 
@@ -485,7 +525,7 @@ out:
 	return ret;
 }
 
-static void msm_ion_get_heap_base(struct device_node *node,
+static int msm_ion_get_heap_base(struct device_node *node,
 				 struct ion_platform_heap *heap)
 {
 	u32 out_values[2];
@@ -497,13 +537,17 @@ static void msm_ion_get_heap_base(struct device_node *node,
 	if (!ret)
 		heap->base = out_values[0];
 
+	ret = 0;
 	pnode = of_parse_phandle(node, "linux,contiguous-region", 0);
 	if (pnode != NULL) {
-		heap->base = cma_get_base(heap->priv);
+		if (cma_area_exist(heap->priv))
+			heap->base = cma_get_base(heap->priv);
+		else
+			ret = -ENOMEM;
 		of_node_put(pnode);
 	}
 
-	return;
+	return ret;
 }
 
 static void msm_ion_get_heap_adjacent(struct device_node *node,
@@ -593,7 +637,11 @@ static struct ion_platform_data *msm_ion_parse_dt(struct platform_device *pdev)
 		if (ret)
 			goto free_heaps;
 
-		msm_ion_get_heap_base(node, &pdata->heaps[idx]);
+		ret = msm_ion_get_heap_base(node, &pdata->heaps[idx]);
+		if (ret) {
+			pr_err("%s: Unable to get valid base addr\n", __func__);
+			continue;
+		}
 		msm_ion_get_heap_align(node, &pdata->heaps[idx]);
 
 		ret = msm_ion_get_heap_size(node, &pdata->heaps[idx]);
@@ -604,6 +652,7 @@ static struct ion_platform_data *msm_ion_parse_dt(struct platform_device *pdev)
 
 		++idx;
 	}
+	pdata->nr = idx;
 	return pdata;
 
 free_heaps:
@@ -953,7 +1002,7 @@ static int msm_ion_probe(struct platform_device *pdev)
 	int i;
 	if (pdev->dev.of_node) {
 		pdata = msm_ion_parse_dt(pdev);
-		if (IS_ERR(pdata)) {
+		if (IS_ERR_OR_NULL(pdata)) {
 			err = PTR_ERR(pdata);
 			goto out;
 		}

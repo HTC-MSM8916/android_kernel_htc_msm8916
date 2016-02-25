@@ -25,6 +25,8 @@
 #include <linux/regulator/consumer.h>
 #include <linux/mm.h>
 
+#include "kgsl_htc.h"
+
 /* The number of memstore arrays limits the number of contexts allowed.
  * If more contexts are needed, update multiple for MEMSTORE_SIZE
  */
@@ -94,6 +96,8 @@ struct kgsl_driver {
 		unsigned int mapped_max;
 	} stats;
 	unsigned int full_cache_threshold;
+
+	struct kgsl_driver_htc_priv priv;
 };
 
 extern struct kgsl_driver kgsl_driver;
@@ -146,9 +150,14 @@ struct kgsl_memdesc {
 	unsigned int sglen; /* Active entries in the sglist */
 	struct kgsl_memdesc_ops *ops;
 	unsigned int flags; /* Flags set from userspace */
+	struct kgsl_process_private *private;
 	struct device *dev;
+
+	unsigned long sg_create;
+	struct scatterlist *sg_backup;
 };
 
+#if 0
 /*
  * List of different memory entry types. The usermem enum
  * starts at 0, which we use for allocated memory, so 1 is
@@ -160,6 +169,18 @@ struct kgsl_memdesc {
 #define KGSL_MEM_ENTRY_USER (KGSL_USER_MEM_TYPE_ADDR + 1)
 #define KGSL_MEM_ENTRY_ION (KGSL_USER_MEM_TYPE_ION + 1)
 #define KGSL_MEM_ENTRY_MAX (KGSL_USER_MEM_TYPE_MAX + 1)
+#else
+enum {
+	KGSL_MEM_ENTRY_KERNEL = 0,
+	KGSL_MEM_ENTRY_PMEM,
+	KGSL_MEM_ENTRY_ASHMEM,
+	KGSL_MEM_ENTRY_USER,
+	KGSL_MEM_ENTRY_ION,
+	KGSL_MEM_ENTRY_PAGE_ALLOC,
+	KGSL_MEM_ENTRY_PRE_ALLOC,
+	KGSL_MEM_ENTRY_MAX,
+};
+#endif
 
 /* symbolic table for trace and debugfs */
 #define KGSL_MEM_TYPES \

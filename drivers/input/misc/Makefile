@@ -68,15 +68,19 @@ obj-$(CONFIG_BMP18X_I2C)		+= bmp18x-i2c.o
 obj-$(CONFIG_SENSORS_MMC3416X)		+= mmc3416x.o
 obj-$(CONFIG_SENSORS_MMA8X5X)	  	+= mma8x5x.o
 obj-$(CONFIG_SENSORS_STK3X1X)		+= stk3x1x.o
+obj-$(CONFIG_AK8789_HALLSENSOR)		+= hall_sensor.o
 obj-$(CONFIG_SENSORS_CAPELLA_CM36283)	+= cm36283.o
 obj-$(CONFIG_SENSORS_MPU6050)		+= mpu6050.o
 obj-$(CONFIG_SENSORS_AKM8963)		+= akm8963.o
+obj-$(CONFIG_SENSORS_AKM8963_HTC)	+= akm8963_htc.o
 obj-$(CONFIG_SENSORS_AKM09911)		+= akm09911.o
 obj-$(CONFIG_SENSORS_LIS3DH)		+= lis3dh_acc.o
 obj-$(CONFIG_SENSORS_AP3426)		+= ap3426.o
 obj-$(CONFIG_SENSORS_BMA2X2)	+= bstclass.o
 
 obj-$(CONFIG_SENSORS_BMA2X2)	+= bma2x2.o
+obj-$(CONFIG_SENSORS_BMA2X2_HTC)	+= bma2x2_htc.o
+obj-$(CONFIG_SENSORS_BMA2X2_HTC)	+= bstclass.o
 obj-$(CONFIG_SENSORS_LTR553)	+= ltr553.o
 
 ifeq ($(CONFIG_SENSORS_BMA2X2_ENABLE_INT1),y)

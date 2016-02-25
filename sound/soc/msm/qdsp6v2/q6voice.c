@@ -426,8 +426,6 @@ static void voc_set_error_state(uint16_t reset_proc)
 	int i;
 
 	for (i = 0; i < MAX_VOC_SESSIONS; i++) {
-		if (reset_proc == APR_DEST_MODEM  && i == VOC_PATH_FULL)
-			continue;
 
 		v = &common.voice[i];
 		if (v != NULL)
@@ -569,12 +567,20 @@ static int voice_apr_register(uint32_t session_id)
 	return 0;
 
 err:
+	if (common.apr_q6_cvp != NULL) {
+		pr_debug("%s, err - reset apr_q6_cvp\n",__func__);
+		apr_deregister(common.apr_q6_cvp);
+		common.apr_q6_cvp = NULL;
+		rtac_set_voice_handle(RTAC_CVP, NULL);
+	}
 	if (common.apr_q6_cvs != NULL) {
+		pr_debug("%s, err - reset apr_q6_cvs\n",__func__);
 		apr_deregister(common.apr_q6_cvs);
 		common.apr_q6_cvs = NULL;
 		rtac_set_voice_handle(RTAC_CVS, NULL);
 	}
 	if (common.apr_q6_mvm != NULL) {
+		pr_debug("%s, err - reset apr_q6_mvm\n",__func__);
 		apr_deregister(common.apr_q6_mvm);
 		common.apr_q6_mvm = NULL;
 	}
@@ -3596,8 +3602,12 @@ static int voice_send_netid_timing_cmd(struct voice_data *v)
 	mvm_set_voice_timing.timing.mode = 0;
 	mvm_set_voice_timing.timing.enc_offset = 8000;
 	mvm_set_voice_timing.timing.dec_req_offset = 3300;
-	mvm_set_voice_timing.timing.dec_offset = 8300;
+	if (is_voip_session(v->session_id))
+		mvm_set_voice_timing.timing.dec_offset = 13300;
+	else
+		mvm_set_voice_timing.timing.dec_offset = 8300;
 
+	pr_debug("Setting voice timing dec_offset %d\n", mvm_set_voice_timing.timing.dec_offset);
 	v->mvm_state = CMD_STATUS_FAIL;
 
 	ret = apr_send_pkt(apr_mvm, (uint32_t *) &mvm_set_voice_timing);

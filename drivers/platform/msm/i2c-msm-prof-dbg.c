@@ -48,6 +48,36 @@ struct i2c_msm_dbgfs_file {
 	u32                          *value_ptr;
 };
 
+static int i2c_msm_dbgfs_scl_gpio_read(void *data, u64 *val)
+{
+	struct i2c_msm_ctrl *ctrl = data;
+	int i;
+
+	*val = (ctrl->scl_gpio > 0) ? gpio_get_value(ctrl->scl_gpio) : 1;
+
+	for (i = 0; i < CONTROLLER_SIZE; i++)
+		test_recovery[i] = true;
+
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i2c_msm_dbgfs_scl_gpio_fops,
+			i2c_msm_dbgfs_scl_gpio_read,
+			NULL,
+			"0x%llx");
+
+static int i2c_msm_dbgfs_sda_gpio_read(void *data, u64 *val)
+{
+	struct i2c_msm_ctrl *ctrl = data;
+	*val = (ctrl->sda_gpio > 0) ? gpio_get_value(ctrl->sda_gpio) : 1;
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(i2c_msm_dbgfs_sda_gpio_fops,
+			i2c_msm_dbgfs_sda_gpio_read,
+			NULL,
+			"0x%llx");
+
 static const umode_t I2C_MSM_DFS_MD_R  = S_IRUSR | S_IRGRP;
 static const umode_t I2C_MSM_DFS_MD_W  = S_IWUSR | S_IWGRP;
 static const umode_t I2C_MSM_DFS_MD_RW = S_IRUSR | S_IRGRP |
@@ -99,6 +129,10 @@ void i2c_msm_dbgfs_init(struct i2c_msm_ctrl *ctrl)
 				NULL, &ctrl->dbgfs.dbg_lvl},
 		{"xfer-force-mode", I2C_MSM_DFS_MD_RW, I2C_MSM_DFS_U8,
 				NULL, &ctrl->dbgfs.force_xfer_mode},
+		{"scl-gpio",     I2C_MSM_DFS_MD_R, I2C_MSM_DFS_FILE,
+				&i2c_msm_dbgfs_scl_gpio_fops, NULL},
+		{"sda-gpio",     I2C_MSM_DFS_MD_R, I2C_MSM_DFS_FILE,
+				&i2c_msm_dbgfs_sda_gpio_fops, NULL},
 		{NULL, 0, 0, NULL , NULL}, /* null terminator */
 	};
 	return i2c_msm_dbgfs_create(ctrl, i2c_msm_dbgfs_map);

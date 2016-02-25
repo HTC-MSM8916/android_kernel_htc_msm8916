@@ -571,6 +571,13 @@ unsigned long cma_get_size(struct device *dev)
 	return cma->count << PAGE_SHIFT;
 }
 
+bool cma_area_exist(struct device *dev)
+{
+	struct cma *cma = dev_get_cma_area(dev);
+
+	return (cma != dma_contiguous_def_area);
+}
+
 static void clear_cma_bitmap(struct cma *cma, unsigned long pfn, int count)
 {
 	mutex_lock(&cma->lock);

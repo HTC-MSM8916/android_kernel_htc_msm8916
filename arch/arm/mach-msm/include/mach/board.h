@@ -192,8 +192,8 @@ struct msm_gpio_set_tbl {
 };
 
 struct msm_camera_gpio_num_info {
-	uint16_t gpio_num[10];
-	uint8_t valid[10];
+	uint16_t gpio_num[20];
+	uint8_t valid[20];
 };
 
 struct msm_camera_gpio_conf {
@@ -676,6 +676,61 @@ void msm_hsusb_set_vbus_state(int online);
 #else
 static inline void msm_hsusb_set_vbus_state(int online) {}
 #endif
+
+void msm_otg_set_vbus_state(int online);
+void htc_dwc3_msm_otg_set_vbus_state(int online);
+enum usb_connect_type {
+	CONNECT_TYPE_NOTIFY = -3,
+	CONNECT_TYPE_CLEAR = -2,
+	CONNECT_TYPE_UNKNOWN = -1,
+	CONNECT_TYPE_NONE = 0,
+	CONNECT_TYPE_USB,
+	CONNECT_TYPE_AC,
+	CONNECT_TYPE_9V_AC,
+	CONNECT_TYPE_WIRELESS,
+	CONNECT_TYPE_INTERNAL,
+	CONNECT_TYPE_UNSUPPORTED,
+#ifdef CONFIG_MACH_VERDI_LTE
+
+	CONNECT_TYPE_USB_9V_AC,
+#endif
+	CONNECT_TYPE_MHL_AC,
+};
+struct t_usb_status_notifier{
+	struct list_head notifier_link;
+	const char *name;
+	void (*func)(int cable_type);
+};
+int htc_usb_register_notifier(struct t_usb_status_notifier *notifer);
+int64_t htc_qpnp_adc_get_usbid_adc(void);
+int usb_get_connect_type(void);
+static LIST_HEAD(g_lh_usb_notifier_list);
+
+struct t_cable_status_notifier{
+	struct list_head cable_notifier_link;
+	const char *name;
+	void (*func)(int cable_type);
+};
+int cable_detect_register_notifier(struct t_cable_status_notifier *);
+static LIST_HEAD(g_lh_calbe_detect_notifier_list);
+
+#ifdef CONFIG_HTC_MHL_DETECTION
+struct t_mhl_status_notifier{
+	struct list_head mhl_notifier_link;
+	const char *name;
+	void (*func)(bool isMHL, int charging_type);
+};
+int mhl_detect_register_notifier(struct t_mhl_status_notifier *);
+static LIST_HEAD(g_lh_mhl_detect_notifier_list);
+#endif
+
+struct t_usb_host_status_notifier{
+	struct list_head usb_host_notifier_link;
+	const char *name;
+	void (*func)(bool cable_in);
+};
+int usb_host_detect_register_notifier(struct t_usb_host_status_notifier *);
+static LIST_HEAD(g_lh_usb_host_detect_notifier_list);
 
 void msm_snddev_init(void);
 void msm_snddev_init_timpani(void);

@@ -84,7 +84,7 @@ static void __pass_event(struct evdev_client *client,
 	if (event->type == EV_SYN && event->code == SYN_REPORT) {
 		client->packet_head = client->head;
 		if (client->use_wake_lock)
-			wake_lock(&client->wake_lock);
+			wake_lock_timeout(&client->wake_lock,5*HZ);
 		kill_fasync(&client->fasync, SIGIO, POLL_IN);
 	}
 }
@@ -708,7 +708,7 @@ static int evdev_enable_suspend_block(struct evdev *evdev,
 	wake_lock_init(&client->wake_lock, WAKE_LOCK_SUSPEND, client->name);
 	client->use_wake_lock = true;
 	if (client->packet_head != client->tail)
-		wake_lock(&client->wake_lock);
+		wake_lock_timeout(&client->wake_lock,5*HZ);
 	spin_unlock_irq(&client->buffer_lock);
 	return 0;
 }

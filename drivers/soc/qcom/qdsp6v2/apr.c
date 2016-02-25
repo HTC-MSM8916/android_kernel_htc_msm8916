@@ -398,7 +398,6 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 		pr_err("APR: Service needs reset\n");
 		goto done;
 	}
-	svc->priv = priv;
 	svc->id = svc_id;
 	svc->dest_id = dest_id;
 	svc->client_id = client_id;
@@ -413,16 +412,22 @@ struct apr_svc *apr_register(char *dest, char *svc_name, apr_fn svc_fn,
 		}
 		if (!svc->port_cnt && !svc->svc_cnt)
 			clnt->svc_cnt++;
-		svc->port_cnt++;
-		svc->port_fn[temp_port] = svc_fn;
-		svc->port_priv[temp_port] = priv;
+		if (!svc->port_fn[temp_port]) {
+			svc->port_cnt++;
+			svc->port_fn[temp_port] = svc_fn;
+			svc->port_priv[temp_port] = priv;
+		} else {
+			pr_err("APR: someone has registered port function svc_id %d, port_id %d\n", svc_id, temp_port);
+			return NULL;
+		}
 	} else {
 		if (!svc->fn) {
-			if (!svc->port_cnt && !svc->svc_cnt)
+			svc->priv = priv;
+			if (!svc->port_cnt && !svc->svc_cnt) {
 				clnt->svc_cnt++;
+			}
 			svc->fn = svc_fn;
-			if (svc->port_cnt)
-				svc->svc_cnt++;
+			svc->svc_cnt = 1;
 		}
 	}
 
@@ -612,6 +617,85 @@ static void apr_reset_deregister(struct work_struct *work)
 	kfree(apr_reset);
 }
 
+int apr_deregister_port(void *handle, uint32_t port)
+{
+	struct apr_svc *svc = handle;
+	struct apr_client *clnt;
+	int temp_port = 0;
+	uint16_t dest_id;
+	uint16_t client_id;
+	if (!handle)
+		return -EINVAL;
+	mutex_lock(&svc->m_lock);
+	if (port != 0xFFFFFFFF) {
+		temp_port = ((port >> 8) * 8) + (port & 0xFF);
+		svc->port_fn[temp_port] = NULL;
+	}
+	dest_id = svc->dest_id;
+	client_id = svc->client_id;
+	clnt = &client[dest_id][client_id];
+
+	pr_debug("%s, [%d][%d] id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,dest_id, client_id,svc->id,
+			svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
+	if (svc->id == 0) {
+		pr_debug("%s, id 0 just return\n", __func__);
+		mutex_unlock(&svc->m_lock);
+		return 0;
+	}
+	if (svc->port_cnt > 0 || svc->svc_cnt > 0) {
+		if (svc->port_cnt)
+			svc->port_cnt--;
+		else if (svc->svc_cnt)
+			svc->svc_cnt--;
+		if (!svc->port_cnt && !svc->svc_cnt) {
+			if (client[dest_id][client_id].svc_cnt > 0)
+				client[dest_id][client_id].svc_cnt--;
+			pr_debug("%s, reset 1 id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,svc->id,
+						svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
+			svc->need_reset = 0x0;
+		} else {
+			pr_debug("%s, reset 1 keep %d, %d, index %d\n",__func__,svc->port_cnt, svc->svc_cnt,svc->id );
+		}
+	} else if (client[dest_id][client_id].svc_cnt > 0) {
+		client[dest_id][client_id].svc_cnt--;
+		if (!client[dest_id][client_id].svc_cnt) {
+			int i = 0;
+			for (i = 0; i < APR_SVC_MAX; i++) {
+				clnt->svc[i].need_reset = 0x0;
+			}
+			pr_debug("%s, reset 2 id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,svc->id,
+						svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
+		} else {
+			pr_debug("%s, reset 2 keep client[dest_id][client_id].svc_cnt %d, index %d\n",
+					__func__,client[dest_id][client_id].svc_cnt, svc->id);
+		}
+	}
+
+	if (!svc->port_cnt && !svc->svc_cnt) {
+		int i;
+		pr_debug("%s, clear cb fn, id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,svc->id,
+				svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
+		svc->priv = NULL;
+		svc->id = 0;
+		svc->fn = NULL;
+		svc->dest_id = 0;
+		svc->client_id = 0;
+
+
+		for (i = 0; i < APR_MAX_PORTS; i++) {
+			svc->port_fn[i] = NULL;
+		}
+		svc->need_reset = 0x0;
+	}
+	if (client[dest_id][client_id].handle &&
+	    !client[dest_id][client_id].svc_cnt) {
+		apr_tal_close(client[dest_id][client_id].handle);
+		client[dest_id][client_id].handle = NULL;
+	}
+	mutex_unlock(&svc->m_lock);
+	return 0;
+}
+
 int apr_deregister(void *handle)
 {
 	struct apr_svc *svc = handle;
@@ -627,29 +711,56 @@ int apr_deregister(void *handle)
 	client_id = svc->client_id;
 	clnt = &client[dest_id][client_id];
 
+	pr_debug("%s, [%d][%d] id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,dest_id, client_id,svc->id,
+			svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
+	if (svc->id == 0) {
+		pr_debug("%s, id 0 just return\n", __func__);
+		mutex_unlock(&svc->m_lock);
+		return 0;
+	}
 	if (svc->port_cnt > 0 || svc->svc_cnt > 0) {
 		if (svc->port_cnt)
 			svc->port_cnt--;
 		else if (svc->svc_cnt)
 			svc->svc_cnt--;
 		if (!svc->port_cnt && !svc->svc_cnt) {
-			client[dest_id][client_id].svc_cnt--;
+			if (client[dest_id][client_id].svc_cnt > 0)
+				client[dest_id][client_id].svc_cnt--;
+			pr_debug("%s, reset 1 id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,svc->id,
+						svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
 			svc->need_reset = 0x0;
+		} else {
+			pr_debug("%s, reset 1 keep %d, %d, index %d\n",__func__,svc->port_cnt, svc->svc_cnt,svc->id );
 		}
 	} else if (client[dest_id][client_id].svc_cnt > 0) {
 		client[dest_id][client_id].svc_cnt--;
 		if (!client[dest_id][client_id].svc_cnt) {
-			svc->need_reset = 0x0;
-			pr_debug("%s: service is reset %p\n", __func__, svc);
+			int i = 0;
+			for (i = 0; i < APR_SVC_MAX; i++) {
+				clnt->svc[i].need_reset = 0x0;
+			}
+			pr_debug("%s, reset 2 id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,svc->id,
+						svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
+		} else {
+			pr_debug("%s, reset 2 keep client[dest_id][client_id].svc_cnt %d, index %d\n",
+					__func__,client[dest_id][client_id].svc_cnt, svc->id);
 		}
 	}
 
 	if (!svc->port_cnt && !svc->svc_cnt) {
+		int i;
+		pr_debug("%s, clear cb fn, id %d, svc_cnt %d,port_cnt %d, client svc_cnt %d\n",__func__,svc->id,
+				svc->svc_cnt,svc->port_cnt, client[dest_id][client_id].svc_cnt);
 		svc->priv = NULL;
 		svc->id = 0;
 		svc->fn = NULL;
 		svc->dest_id = 0;
 		svc->client_id = 0;
+
+
+		for (i = 0; i < APR_MAX_PORTS; i++) {
+			svc->port_fn[i] = NULL;
+		}
 		svc->need_reset = 0x0;
 	}
 	if (client[dest_id][client_id].handle &&
@@ -665,10 +776,12 @@ int apr_deregister(void *handle)
 void apr_reset(void *handle)
 {
 	struct apr_reset_work *apr_reset_worker = NULL;
-
-	if (!handle)
+	struct apr_svc *svc = (struct apr_svc*)handle;
+	if (!handle) {
+		pr_err("%s, reset handle is NULL\n",__func__);
 		return;
-	pr_debug("%s: handle[%p]\n", __func__, handle);
+	}
+	pr_debug("%s: handle[%p], id %d\n", __func__, handle, svc->id);
 
 	if (apr_reset_workqueue == NULL) {
 		pr_err("%s: apr_reset_workqueue is NULL\n", __func__);
@@ -696,6 +809,9 @@ void dispatch_event(unsigned long code, uint16_t proc)
 	struct apr_svc *svc;
 	uint16_t clnt;
 	int i, j;
+	int tmp_svc_cnt = 0;
+	int clnt_svc_cnt = 0;
+	int tmp_has_svc = 0;
 
 	data.opcode = RESET_EVENTS;
 	data.reset_event = code;
@@ -705,41 +821,73 @@ void dispatch_event(unsigned long code, uint16_t proc)
 
 	clnt = APR_CLIENT_AUDIO;
 	apr_client = &client[proc][clnt];
+	clnt_svc_cnt = apr_client->svc_cnt;
+	tmp_svc_cnt = 0;
 	for (i = 0; i < APR_SVC_MAX; i++) {
+		tmp_has_svc = 0;
 		mutex_lock(&apr_client->svc[i].m_lock);
-		if (apr_client->svc[i].fn) {
-			apr_client->svc[i].need_reset = 0x1;
-			apr_client->svc[i].fn(&data, apr_client->svc[i].priv);
-		}
 		if (apr_client->svc[i].port_cnt) {
+			int tmp_port_cnt = 0;
+			int svc_port_cnt = apr_client->svc[i].port_cnt;
+			tmp_has_svc = 1;
+			pr_debug("%s, APR_CLIENT_AUDIO port_cnt function_index %d\n", __func__, i);
 			svc = &(apr_client->svc[i]);
 			svc->need_reset = 0x1;
 			for (j = 0; j < APR_MAX_PORTS; j++)
-				if (svc->port_fn[j])
+				if (svc->port_fn[j]) {
 					svc->port_fn[j](&data,
 						svc->port_priv[j]);
+					tmp_port_cnt++;
+				}
+			if (tmp_port_cnt != svc_port_cnt)
+				pr_err("%s, APR_CLIENT_AUDIO port count not match (%d, %d)", __func__, tmp_port_cnt, svc_port_cnt);
+		}
+		if (apr_client->svc[i].fn) {
+			tmp_has_svc = 1;
+			pr_debug("%s, APR_CLIENT_AUDIO function_index %d\n", __func__, i);
+			apr_client->svc[i].need_reset = 0x1;
+			apr_client->svc[i].fn(&data, apr_client->svc[i].priv);
 		}
 		mutex_unlock(&apr_client->svc[i].m_lock);
+		tmp_svc_cnt += tmp_has_svc;
 	}
+	if (tmp_svc_cnt != clnt_svc_cnt)
+		pr_err("%s, APR_CLIENT_AUDIO client service count not match (%d, %d)", __func__, tmp_svc_cnt, clnt_svc_cnt);
 
 	clnt = APR_CLIENT_VOICE;
 	apr_client = &client[proc][clnt];
+	clnt_svc_cnt = apr_client->svc_cnt;
+	tmp_svc_cnt = 0;
 	for (i = 0; i < APR_SVC_MAX; i++) {
+		tmp_has_svc = 0;
 		mutex_lock(&apr_client->svc[i].m_lock);
-		if (apr_client->svc[i].fn) {
-			apr_client->svc[i].need_reset = 0x1;
-			apr_client->svc[i].fn(&data, apr_client->svc[i].priv);
-		}
 		if (apr_client->svc[i].port_cnt) {
+			int tmp_port_cnt = 0;
+			int svc_port_cnt = apr_client->svc[i].port_cnt;
+			tmp_has_svc = 1;
+			pr_debug("%s, APR_CLIENT_VOICE port_cnt function_index %d\n", __func__, i);
 			svc = &(apr_client->svc[i]);
 			svc->need_reset = 0x1;
 			for (j = 0; j < APR_MAX_PORTS; j++)
-				if (svc->port_fn[j])
+				if (svc->port_fn[j]) {
 					svc->port_fn[j](&data,
 						svc->port_priv[j]);
+					tmp_port_cnt++;
+				}
+			if (tmp_port_cnt != svc_port_cnt)
+				pr_err("%s, APR_CLIENT_VOICE port count not match (%d, %d)", __func__, tmp_port_cnt, svc_port_cnt);
+		}
+		if (apr_client->svc[i].fn) {
+			tmp_has_svc = 1;
+			pr_debug("%s, APR_CLIENT_VOICE function_index %d\n", __func__, i);
+			apr_client->svc[i].need_reset = 0x1;
+			apr_client->svc[i].fn(&data, apr_client->svc[i].priv);
 		}
 		mutex_unlock(&apr_client->svc[i].m_lock);
+		tmp_svc_cnt += tmp_has_svc;
 	}
+	if (tmp_svc_cnt != clnt_svc_cnt)
+		pr_err("%s, APR_CLIENT_VOICE client service count not match (%d, %d)", __func__, tmp_svc_cnt, clnt_svc_cnt);
 }
 
 static int modem_notifier_cb(struct notifier_block *this, unsigned long code,
@@ -848,7 +996,7 @@ static struct notifier_block panic_nb = {
 
 static int __init apr_init(void)
 {
-	int i, j, k;
+	int i, j, k, l;
 
 	for (i = 0; i < APR_DEST_MAX; i++)
 		for (j = 0; j < APR_CLIENT_MAX; j++) {
@@ -856,6 +1004,11 @@ static int __init apr_init(void)
 			for (k = 0; k < APR_SVC_MAX; k++) {
 				mutex_init(&client[i][j].svc[k].m_lock);
 				spin_lock_init(&client[i][j].svc[k].w_lock);
+
+				client[i][j].svc[k].fn = NULL;
+				for (l = 0; l < APR_MAX_PORTS; l++) {
+					client[i][j].svc[k].port_fn[l] = NULL;
+				}
 			}
 		}
 	apr_set_subsys_state();

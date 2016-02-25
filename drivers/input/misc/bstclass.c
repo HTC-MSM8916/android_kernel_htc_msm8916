@@ -86,7 +86,7 @@ static char *bst_devnode(struct device *dev, umode_t *mode)
 }
 
 struct class bst_class = {
-	.name        = "bst",
+	.name        = "htc_g_sensor",
 	.owner       = THIS_MODULE,
 	.devnode     = bst_devnode,
 	.dev_release = bst_dev_release,

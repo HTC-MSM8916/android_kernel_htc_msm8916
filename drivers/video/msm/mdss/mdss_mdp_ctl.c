@@ -25,6 +25,7 @@
 #include "mdss_fb.h"
 #include "mdss_mdp.h"
 #include "mdss_debug.h"
+#include "mdss_htc_util.h"
 #include "mdss_mdp_trace.h"
 #include "mdss_debug.h"
 
@@ -789,6 +790,8 @@ static void mdss_mdp_perf_calc_mixer(struct mdss_mdp_mixer *mixer,
 			if (!bw_overlap[j])
 				continue;
 			pipe = pipe_list[j];
+			if (pipe == NULL)
+				continue;
 			if (mdss_mdp_perf_is_overlap(y0, y1, pipe->dst.y,
 				(pipe->dst.y + pipe->dst.h)))
 				bw_max_region += bw_overlap[j];
@@ -3340,6 +3343,9 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 		sctl->flush_bits = 0;
 	}
 	ATRACE_END("postproc_programming");
+
+	if ((ctl->mfd) && (ctl->mfd->index == 0))
+		htc_set_pp_pa(ctl);
 
 	mdss_mdp_xlog_mixer_reg(ctl);
 

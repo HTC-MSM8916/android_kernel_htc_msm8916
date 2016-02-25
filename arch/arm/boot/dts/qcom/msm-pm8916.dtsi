@@ -47,7 +47,7 @@
 			qcom,pon_2 {
 				qcom,pon-type = <1>;
 				qcom,pull-up = <1>;
-				linux,code = <114>;
+				//linux,code = <114>;
 			};
 		};
 
@@ -68,6 +68,10 @@
 			mpp@a100 {
 				reg = <0xa100 0x100>;
 				qcom,pin-num = <2>;
+				qcom,mode = <4>; //QPNP_PIN_MODE_AIN
+				qcom,src-sel = <0>; //QPNP_PIN_SEL_FUNC_CONSTANT
+				qcom,ain-route = <1>; //QPNP_PIN_AIN_AMUX_CH8
+				qcom,master-en = <1>; //ENABLE FEATURE
 			};
 
 			mpp@a200 {
@@ -116,7 +120,7 @@
                         compatible = "qcom,qpnp-rtc";
                         #address-cells = <1>;
                         #size-cells = <1>;
-                        qcom,qpnp-rtc-write = <0>;
+                        qcom,qpnp-rtc-write = <1>;
                         qcom,qpnp-rtc-alarm-pwrup = <0>;
 
                         qcom,pm8916_rtc_rw@6000 {
@@ -172,6 +176,28 @@
 				qcom,hw-settle-time = <0>;
 				qcom,fast-avg-setup = <0>;
 			};
+
+			chan@11 {
+				label = "usb_id_mpp2";
+				reg   = <0x11>;
+				qcom,decimation = <0>;				//512 sampling rate
+				qcom,pre-div-channel-scaling = <0>;	//1:1 scaling
+				qcom,calibration-type = "absolute";	//Use 625mV & 1.25V reference voltage
+				qcom,scale-function = <0>;			//convert raw adc code to voltage
+				qcom,hw-settle-time = <0>;			//200us
+				qcom,fast-avg-setup = <0>;			//with only 1 average measurement
+			};
+
+			chan@13 {
+				label = "hs_remote_sensor_mpp4";
+				reg = <0x13>;
+				qcom,decimation = <0>;				//512 sampling rate
+				qcom,pre-div-channel-scaling = <0>;		//1:1 scaling
+				qcom,calibration-type = "absolute";		//Use 625mV & 1.25V reference voltage
+				qcom,scale-function = <0>;				//convert raw adc code to voltage
+				qcom,hw-settle-time = <2>;			//200us
+				qcom,fast-avg-setup = <0>;			//with only 1 average measurement
+			};
 		};
 
 		pm8916_tz: qcom,temp-alarm@2400 {
@@ -207,22 +233,27 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			qcom,vddmax-mv = <4200>;
-			qcom,vddsafe-mv = <4200>;
-			qcom,vinmin-mv = <4308>;
-			qcom,ibatsafe-ma = <1440>;
-			qcom,thermal-mitigation = <1440 720 630 0>;
-			qcom,cool-bat-decidegc = <100>;
-			qcom,warm-bat-decidegc = <450>;
-			qcom,cool-bat-mv = <4100>;
-			qcom,warm-bat-mv = <4100>;
-			qcom,ibatmax-warm-ma = <360>;
-			qcom,ibatmax-cool-ma = <360>;
+			qcom,vddmax-mv = <4325>;
+			qcom,vddsafe-mv = <4370>;
+			qcom,vinmin-mv = <4300>;
+			qcom,ibatsafe-ma = <990>;
+			qcom,vbatweak-mv = <3210>;
+			qcom,thermal-mitigation = <1500 700 600 325>;
+			qcom,cool-bat-decidegc = <0>;
+			qcom,warm-bat-decidegc = <480>;
+			qcom,cool-bat-mv = <4325>;
+			qcom,ibatmax-warm-ma = <990>;
+			qcom,ibatmax-cool-ma = <990>;
+			qcom,warm-bat-degc = <48>;
+			qcom,warm-bat-mv = <4000>;
 			qcom,batt-hot-percentage = <25>;
 			qcom,batt-cold-percentage = <80>;
-			qcom,tchg-mins = <232>;
+			qcom,tchg-mins = <960>;
+			qcom,resume-soc = <97>;
 			qcom,chg-vadc = <&pm8916_vadc>;
 			qcom,chg-adc_tm = <&pm8916_adc_tm>;
+			qcom,pmic-revid = <&pm8916_revid>;
+			qcom,disable-vbatdet-based-recharge;
 
 			status = "disabled";
 
@@ -250,10 +281,12 @@
 				reg = <0x1300 0x100>;
 				interrupts =	<0 0x13 0x4>,
 						<0 0x13 0x2>,
-						<0 0x13 0x1>;
+						<0 0x13 0x1>,
+						<0 0x13 0x0>;
 				interrupt-names =	"usb-over-temp",
 							"chg-gone",
-							"usbin-valid";
+							"usbin-valid",
+							"coarse-det-usb";
 			};
 
 			qcom,chg-misc@1600 {
@@ -269,9 +302,9 @@
 			status = "disabled";
 
 			qcom,v-cutoff-uv = <3400000>;
-			qcom,max-voltage-uv = <4200000>;
-			qcom,r-conn-mohm = <0>;
-			qcom,shutdown-soc-valid-limit = <100>;
+			qcom,max-voltage-uv = <4350000>;
+			qcom,r-conn-mohm = <20>;
+			qcom,shutdown-soc-valid-limit = <0>;
 			qcom,low-soc-calculate-soc-threshold = <15>;
 			qcom,low-voltage-calculate-soc-ms = <1000>;
 			qcom,low-soc-calculate-soc-ms = <5000>;
@@ -279,6 +312,7 @@
 			qcom,volatge-soc-timeout-ms = <60000>;
 			qcom,low-voltage-threshold = <3450000>;
 			qcom,s3-ocv-tolerence-uv = <1200>;
+			qcom,s1-fifo-length = <5>;
 			qcom,s2-fifo-length = <5>;
 			qcom,low-soc-fifo-length = <2>;
 			qcom,bms-vadc = <&pm8916_vadc>;

@@ -36,8 +36,35 @@ struct android_usb_platform_data {
 	u8 usb_core_id;
 	char streaming_func[MAX_STREAMING_FUNCS][FUNC_NAME_LEN];
 	int  streaming_func_count;
+
+	__u16 vendor_id;
+
+	__u16 product_id;
+
+	char *product_name;
+	char *manufacturer_name;
+	char *serial_number;
+
+	const char *fserial_init_string;
+
+	const char *usb_rmnet_interface;
+	const char *usb_diag_interface;
+
+	unsigned char diag_init:1;
+	unsigned char modem_init:1;
+	unsigned char rmnet_init:1;
+	unsigned char reserved:5;
+
+	int (*match)(int product_id, int intrsharing);
+
+	int nluns;
+	int cdrom_lun;
+	bool internal_ums;
+	int vzw_unmount_cdrom;
+
 	u8 uicc_nluns;
 	bool cdrom;
+	bool (*specific_rom_cb)(void);
 };
 
 #ifndef CONFIG_TARGET_CORE
@@ -71,5 +98,14 @@ extern bool gserial_is_dun_w_softap_active(void);
 int acm_port_setup(struct usb_configuration *c);
 void acm_port_cleanup(void);
 int acm_init_port(int port_num, const char *name);
+
+enum fserial_func_type {
+	USB_FSER_FUNC_NONE,
+	USB_FSER_FUNC_SERIAL,
+	USB_FSER_FUNC_MODEM,
+	USB_FSER_FUNC_MODEM_MDM,
+	USB_FSER_FUNC_ACM,
+	USB_FSER_FUNC_AUTOBOT,
+};
 
 #endif	/* __LINUX_USB_ANDROID_H */

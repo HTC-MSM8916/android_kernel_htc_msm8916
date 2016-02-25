@@ -83,6 +83,11 @@ const struct spi_device_id *spi_get_device_id(const struct spi_device *sdev)
 {
 	const struct spi_driver *sdrv = to_spi_driver(sdev->dev.driver);
 
+	if (!sdrv) {
+		pr_err("%s:%d sdrv is NULL\n", __func__, __LINE__);
+		return NULL;
+	}
+
 	return spi_match_id(sdrv->id_table, sdev);
 }
 EXPORT_SYMBOL_GPL(spi_get_device_id);
@@ -91,6 +96,15 @@ static int spi_match_device(struct device *dev, struct device_driver *drv)
 {
 	const struct spi_device	*spi = to_spi_device(dev);
 	const struct spi_driver	*sdrv = to_spi_driver(drv);
+
+	if (!spi) {
+		pr_err("%s:%d spi is NULL\n", __func__, __LINE__);
+		return 0;
+	}
+	if (!sdrv) {
+		pr_err("%s:%d sdrv is NULL\n", __func__, __LINE__);
+		return 0;
+	}
 
 	/* Attempt an OF style match */
 	if (of_driver_match_device(dev, drv))
@@ -241,6 +255,11 @@ static int spi_drv_probe(struct device *dev)
 {
 	const struct spi_driver		*sdrv = to_spi_driver(dev->driver);
 
+	if (!sdrv) {
+		pr_err("%s:%d sdrv is NULL\n", __func__, __LINE__);
+		return -ENODEV;
+	}
+
 	return sdrv->probe(to_spi_device(dev));
 }
 
@@ -248,12 +267,22 @@ static int spi_drv_remove(struct device *dev)
 {
 	const struct spi_driver		*sdrv = to_spi_driver(dev->driver);
 
+	if (!sdrv) {
+		pr_err("%s:%d sdrv is NULL\n", __func__, __LINE__);
+		return -ENODEV;
+	}
+
 	return sdrv->remove(to_spi_device(dev));
 }
 
 static void spi_drv_shutdown(struct device *dev)
 {
 	const struct spi_driver		*sdrv = to_spi_driver(dev->driver);
+
+	if (!sdrv) {
+		pr_err("%s:%d sdrv is NULL\n", __func__, __LINE__);
+		return;
+	}
 
 	sdrv->shutdown(to_spi_device(dev));
 }

@@ -14,8 +14,8 @@
 #include <mach/msm_iomap.h>
 #include <mach/gpiomux.h>
 
-#define GPIO_CFG(n)    (MSM_TLMM_BASE + 0x1000 + (0x10 * n))
-#define GPIO_IN_OUT(n) (MSM_TLMM_BASE + 0x1004 + (0x10 * n))
+#define GPIO_CFG(n)    (MSM_TLMM_BASE + (x)*0x1000)
+#define GPIO_IN_OUT(n) (MSM_TLMM_BASE + 0x00000004 + (x)*0x1000)
 
 void __msm_gpiomux_write(unsigned gpio, struct gpiomux_setting val)
 {

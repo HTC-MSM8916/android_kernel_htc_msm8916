@@ -1248,6 +1248,8 @@ static int msm_smem_probe(struct platform_device *pdev)
 	struct smem_area *smem_areas_tmp = NULL;
 	int smem_idx = 0;
 	bool security_enabled;
+	unsigned int smem_ramdump_phys;
+	unsigned int smem_ramdump_size;
 
 	r = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 						"smem_targ_info_imem");
@@ -1358,8 +1360,19 @@ smem_targ_info_done:
 	smem_areas_tmp[smem_idx].size = smem_ram_size;
 	smem_areas_tmp[smem_idx].virt_addr = smem_ram_base;
 
-	ramdump_segments_tmp[smem_idx].address = smem_ram_phys;
-	ramdump_segments_tmp[smem_idx].size = smem_ram_size;
+	ret = of_property_read_u32(pdev->dev.of_node, "htc,smem-ramdump-phys", &smem_ramdump_phys);
+	if (ret) {
+		LOG_ERR("%s: reading htc,smem-ramdump-phys failed %d\n", __func__, ret);
+		goto free_smem_areas;
+	}
+	ret = of_property_read_u32(pdev->dev.of_node, "htc,smem-ramdump-size", &smem_ramdump_size);
+	if (ret) {
+		LOG_ERR("%s: reading htc,smem-ramdump-size failed %d\n", __func__, ret);
+		goto free_smem_areas;
+	}
+	ramdump_segments_tmp[smem_idx].address = smem_ramdump_phys;
+	ramdump_segments_tmp[smem_idx].size = smem_ramdump_size;
+
 	++smem_idx;
 
 	/* Configure auxiliary SMEM regions */

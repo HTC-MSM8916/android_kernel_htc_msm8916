@@ -289,6 +289,8 @@ extern int of_count_phandle_with_args(const struct device_node *np,
 extern void of_alias_scan(void * (*dt_alloc)(u64 size, u64 align));
 extern int of_alias_get_id(struct device_node *np, const char *stem);
 
+extern int of_machine_projectid(int index);
+extern int of_machine_hwid(int index);
 extern int of_machine_is_compatible(const char *compat);
 
 extern int of_add_property(struct device_node *np, struct property *prop);

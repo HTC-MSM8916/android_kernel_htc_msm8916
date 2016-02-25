@@ -51,6 +51,9 @@ int of_batterydata_read_data(struct device_node *container_node,
 struct device_node *of_batterydata_get_best_profile(
 		struct device_node *batterydata_container_node,
 		const char *psy_name, const char *batt_type);
+int of_batterydata_read_data_by_id_result(struct device_node *container_node,
+				struct bms_battery_data *batt_data,
+				int id_result);
 #else
 static inline int of_batterydata_read_data(struct device_node *container_node,
 				struct bms_battery_data *batt_data,
@@ -61,6 +64,12 @@ static inline int of_batterydata_read_data(struct device_node *container_node,
 static inline struct device_node *of_batterydata_get_best_profile(
 		struct device_node *batterydata_container_node,
 		struct device_node *best_node, const char *psy_name)
+{
+	return -ENXIO;
+}
+static inline int of_batterydata_read_data_by_id_result(struct device_node *container_node,
+				struct bms_battery_data *batt_data,
+				int id_result);
 {
 	return -ENXIO;
 }

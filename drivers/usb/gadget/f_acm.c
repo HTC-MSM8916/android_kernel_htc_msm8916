@@ -83,8 +83,6 @@ static unsigned int no_acm_smd_ports;
 static unsigned int nr_acm_ports;
 static unsigned int acm_next_free_port;
 
-#define GSERIAL_NO_PORTS 4
-
 static struct acm_port_info {
 	enum transport_type	transport;
 	unsigned		port_num;
@@ -130,11 +128,16 @@ void acm_port_cleanup(void)
 		gserial_free_line(gacm_ports[i].client_port_num);
 }
 
+static unsigned hsm_newpid = 1;
+module_param(hsm_newpid, uint, S_IRUGO|S_IWUSR);
+MODULE_PARM_DESC(hsm_newpid, "Use New PID for HSM ACM");
+
+
 static int acm_port_connect(struct f_acm *acm)
 {
 	unsigned port_num;
 
-	port_num = gacm_ports[acm->port_num].client_port_num;
+	port_num = gserial_ports[acm->port_num].client_port_num;
 
 
 	pr_debug("%s: transport:%s f_acm:%p gserial:%p port_num:%d cl_port_no:%d\n",
@@ -161,7 +164,7 @@ static int acm_port_disconnect(struct f_acm *acm)
 {
 	unsigned port_num;
 
-	port_num = gacm_ports[acm->port_num].client_port_num;
+	port_num = gserial_ports[acm->port_num].client_port_num;
 
 	pr_debug("%s: transport:%s f_acm:%p gserial:%p port_num:%d cl_pno:%d\n",
 			__func__, xport_to_str(acm->transport),
@@ -491,8 +494,8 @@ static int acm_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 		 */
 		acm->port_handshake_bits = w_value;
 		if (acm->port.notify_modem) {
-			unsigned port_num =
-				gacm_ports[acm->port_num].client_port_num;
+			unsigned port_num = gserial_ports[acm->port_num].client_port_num;
+
 
 			acm->port.notify_modem(&acm->port, port_num, w_value);
 		}
@@ -846,7 +849,80 @@ static void acm_free_func(struct usb_function *f)
 	acm_next_free_port--;
 }
 
-static struct usb_function *acm_alloc_func(struct usb_function_instance *fi)
+static inline bool can_support_cdc(struct usb_configuration *c)
+{
+
+	return true;
+}
+
+int acm_bind_config(struct usb_configuration *c, u8 port_num)
+{
+	struct f_acm	*acm;
+	int		status;
+
+	if (!can_support_cdc(c))
+		return -EINVAL;
+
+
+
+	if (acm_string_defs[ACM_CTRL_IDX].id == 0) {
+		status = usb_string_id(c->cdev);
+		if (status < 0)
+			return status;
+		acm_string_defs[ACM_CTRL_IDX].id = status;
+
+		acm_control_interface_desc.iInterface = status;
+
+		status = usb_string_id(c->cdev);
+		if (status < 0)
+			return status;
+		acm_string_defs[ACM_DATA_IDX].id = status;
+
+		acm_data_interface_desc.iInterface = status;
+
+		status = usb_string_id(c->cdev);
+		if (status < 0)
+			return status;
+		acm_string_defs[ACM_IAD_IDX].id = status;
+
+		acm_iad_descriptor.iFunction = status;
+	}
+
+
+	acm = kzalloc(sizeof *acm, GFP_KERNEL);
+	if (!acm)
+		return -ENOMEM;
+
+	spin_lock_init(&acm->lock);
+
+	acm->port_num = port_num;
+	acm->transport = gserial_ports[port_num].transport;
+
+	acm->port.connect = acm_connect;
+	acm->port.disconnect = acm_disconnect;
+	acm->port.send_break = acm_send_break;
+	acm->port.send_modem_ctrl_bits = acm_send_modem_ctrl_bits;
+
+	acm->port.func.name = kasprintf(GFP_KERNEL, "acm%u", port_num + 1);
+	if (!acm->port.func.name) {
+		kfree(acm);
+		return -ENOMEM;
+	}
+	acm->port.func.strings = acm_strings;
+
+	acm->port.func.bind = acm_bind;
+	acm->port.func.unbind = acm_unbind;
+	acm->port.func.set_alt = acm_set_alt;
+	acm->port.func.setup = acm_setup;
+	acm->port.func.disable = acm_disable;
+
+	status = usb_add_function(c, &acm->port.func);
+	if (status)
+		kfree(acm);
+	return status;
+}
+
+static __maybe_unused struct usb_function *acm_alloc_func(struct usb_function_instance *fi)
 {
 	struct f_serial_opts *opts;
 	struct f_acm *acm;
@@ -862,7 +938,7 @@ static struct usb_function *acm_alloc_func(struct usb_function_instance *fi)
 	if (nr_acm_ports)
 		opts->port_num = acm_next_free_port++;
 
-	acm->transport = gacm_ports[opts->port_num].transport;
+	acm->transport = gserial_ports[opts->port_num].transport;
 	acm->port.connect = acm_connect;
 	acm->port.disconnect = acm_disconnect;
 	acm->port.send_break = acm_send_break;
@@ -883,6 +959,7 @@ static struct usb_function *acm_alloc_func(struct usb_function_instance *fi)
 	return &acm->port.func;
 }
 
+#if 0
 static inline struct f_serial_opts *to_f_serial_opts(struct config_item *item)
 {
 	return container_of(to_config_group(item), struct f_serial_opts,
@@ -969,6 +1046,7 @@ static struct usb_function_instance *acm_alloc_instance(void)
 }
 DECLARE_USB_FUNCTION_INIT(acm, acm_alloc_instance, acm_alloc_func);
 MODULE_LICENSE("GPL");
+#endif
 
 /**
  * acm_init_port - bind a acm_port to its transport

@@ -1253,7 +1253,7 @@ static int msm_venc_queue_setup(struct vb2_queue *q,
 					return -EINVAL;
 				}
 
-				sizes[i] = buff_req_buffer->buffer_size;
+				sizes[i] = buff_req_buffer ? buff_req_buffer->buffer_size : 0;
 			}
 		}
 
@@ -1304,7 +1304,7 @@ static int msm_venc_queue_setup(struct vb2_queue *q,
 				return -EINVAL;
 			}
 
-			sizes[extra_idx] = buff_req_buffer->buffer_size;
+			sizes[extra_idx] = buff_req_buffer ? buff_req_buffer->buffer_size : 0;
 		}
 
 		break;
@@ -3593,11 +3593,18 @@ static struct v4l2_ctrl **get_super_cluster(struct msm_vidc_inst *inst,
 				int *size)
 {
 	int c = 0, sz = 0;
-	struct v4l2_ctrl **cluster = kmalloc(sizeof(struct v4l2_ctrl *) *
-			NUM_CTRLS, GFP_KERNEL);
 
-	if (!size || !cluster || !inst)
+	struct v4l2_ctrl **	cluster;
+	if (!size || !inst) {
+		dprintk(VIDC_ERR, "%s - invalid input\n", __func__);
 		return NULL;
+	}
+	cluster = kmalloc(sizeof(struct v4l2_ctrl *) *
+				NUM_CTRLS, GFP_KERNEL);
+	if (!cluster) {
+		dprintk(VIDC_ERR, "%s - NULL cluster!!\n", __func__);
+		return NULL;
+	}
 
 	for (c = 0; c < NUM_CTRLS; c++)
 		cluster[sz++] =  inst->ctrls[c];

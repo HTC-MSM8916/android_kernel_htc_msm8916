@@ -35,7 +35,12 @@
 #define ACCESSORY_STRING_VERSION        3
 #define ACCESSORY_STRING_URI            4
 #define ACCESSORY_STRING_SERIAL         5
+#define USB_AUDIO_PRODUCT_ID 0x2D02
+#define USB_AUDIO_ADB_PRODUCT_ID 0x2D03
+#define USB_ACCESSORY_AUDIO_PRODUCT_ID 0x2D04
+#define USB_ACCESSORY_AUDIO_ADB_PRODUCT_ID 0x2D05
 
+#define USB_ACCESSORY_ADB_PRODUCT_ID 0x2D01
 /* Control request for retrieving device's protocol version
  *
  *	requestType:    USB_DIR_IN | USB_TYPE_VENDOR

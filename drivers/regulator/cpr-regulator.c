@@ -296,6 +296,9 @@ struct cpr_regulator {
 static int cpr_debug_enable;
 #if defined(CONFIG_DEBUG_FS)
 static struct dentry *cpr_debugfs_base;
+#ifdef CONFIG_HTC_POWER_DEBUG
+static struct dentry *cpr_apc_voltage_debugfs_entry;
+#endif
 #endif
 
 static DEFINE_MUTEX(cpr_regulator_list_mutex);
@@ -3915,10 +3918,48 @@ static ssize_t cpr_debug_info_read(struct file *file, char __user *buff,
 	return ret;
 }
 
+#ifdef CONFIG_HTC_POWER_DEBUG
+static ssize_t cpr_apc_voltage_debugfs_read(struct file *file, char __user *buff,
+				size_t count, loff_t *ppos)
+{
+	char *debugfs_buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	ssize_t len, ret = 0;
+
+	if (!debugfs_buf)
+		return -ENOMEM;
+
+	mutex_lock(&the_cpr->cpr_mutex);
+	len = snprintf(debugfs_buf + ret, PAGE_SIZE - ret,
+			"pvs voltage:     [%d %d %d] uV\nceiling voltage: [%d %d %d] uV\nfloor voltage:   [%d %d %d] uV\n",
+			the_cpr->pvs_corner_v[CPR_FUSE_CORNER_SVS],
+			the_cpr->pvs_corner_v[CPR_FUSE_CORNER_NORMAL],
+			the_cpr->pvs_corner_v[CPR_FUSE_CORNER_TURBO],
+			the_cpr->ceiling_volt[CPR_FUSE_CORNER_SVS],
+			the_cpr->ceiling_volt[CPR_FUSE_CORNER_NORMAL],
+			the_cpr->ceiling_volt[CPR_FUSE_CORNER_TURBO],
+			the_cpr->floor_volt[CPR_FUSE_CORNER_SVS],
+			the_cpr->floor_volt[CPR_FUSE_CORNER_NORMAL],
+			the_cpr->floor_volt[CPR_FUSE_CORNER_TURBO]);
+
+	ret += len;
+	mutex_unlock(&the_cpr->cpr_mutex);
+
+	ret = simple_read_from_buffer(buff, count, ppos, debugfs_buf, ret);
+	kfree(debugfs_buf);
+	return ret;
+}
+#endif
+
 static const struct file_operations cpr_debug_info_fops = {
 	.open = cpr_debug_info_open,
 	.read = cpr_debug_info_read,
 };
+
+#ifdef CONFIG_HTC_POWER_DEBUG
+static const struct file_operations cpr_apc_voltage_debugfs_fops = {
+	.read = cpr_apc_voltage_debugfs_read,
+};
+#endif
 
 static void cpr_debugfs_init(struct cpr_regulator *cpr_vreg)
 {
@@ -3949,6 +3990,14 @@ static void cpr_debugfs_init(struct cpr_regulator *cpr_vreg)
 		cpr_err(cpr_vreg, "cpr_enable node creation failed\n");
 		return;
 	}
+
+#ifdef CONFIG_HTC_POWER_DEBUG
+	cpr_apc_voltage_debugfs_entry = debugfs_create_file("apc_voltage", 0444,
+						the_cpr->rdev->debugfs, NULL,
+						&cpr_apc_voltage_debugfs_fops);
+	if (!cpr_apc_voltage_debugfs_entry)
+		pr_err("cpr_apc_voltage_debugfs_entry creation failed.\n");
+#endif
 }
 
 static void cpr_debugfs_remove(struct cpr_regulator *cpr_vreg)

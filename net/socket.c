@@ -578,6 +578,10 @@ const struct file_operations bad_sock_fops = {
 	.llseek = noop_llseek,
 };
 
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
+int add_or_remove_port(struct sock *sk, int add_or_remove);
+#endif
+
 /**
  *	sock_release	-	close a socket
  *	@sock: socket to close
@@ -1569,6 +1573,10 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 				sock_put(sock->sk);
 		}
 		fput_light(sock->file, fput_needed);
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
+		if (sock->sk != NULL)
+			add_or_remove_port(sock->sk, 1);
+#endif
 	}
 	return err;
 }

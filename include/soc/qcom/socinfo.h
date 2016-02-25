@@ -32,6 +32,12 @@
 #define SOCINFO_VERSION_MINOR(ver) (ver & 0x0000ffff)
 
 #ifdef CONFIG_OF
+#define of_machine_pid()		of_machine_projectid(0)
+#define of_machine_socver()	of_machine_projectid(1)
+
+#define of_machine_pcbid()		of_machine_hwid(0)
+#define of_machine_subtype()	of_machine_hwid(1)
+
 #define of_board_is_cdp()	of_machine_is_compatible("qcom,cdp")
 #define of_board_is_sim()	of_machine_is_compatible("qcom,sim")
 #define of_board_is_rumi()	of_machine_is_compatible("qcom,rumi")
@@ -45,6 +51,15 @@
 #define of_board_is_xpm()	of_machine_is_compatible("qcom,xpm")
 #define of_board_is_skuf()	of_machine_is_compatible("qcom,skuf")
 #define of_board_is_sbc()	of_machine_is_compatible("qcom,sbc")
+#define of_board_is_a11ul()	of_machine_is_compatible("htc,a11ul")
+#define of_board_is_a31dtgl()	of_machine_is_compatible("htc,a31dtgl")
+#define of_board_is_a31dtul()	of_machine_is_compatible("htc,a31dtul")
+#define of_board_is_a31dugl()	of_machine_is_compatible("htc,a31dugl")
+#define of_board_is_a31ul()	of_machine_is_compatible("htc,a31ul")
+#define of_board_is_a50ul()	of_machine_is_compatible("htc,a50ul")
+#define of_board_is_a50dugl()	of_machine_is_compatible("htc,a50dugl")
+#define of_board_is_a50dtgl()	of_machine_is_compatible("htc,a50dtgl")
+#define of_board_is_a50dtul()	of_machine_is_compatible("htc,a50dtul")
 
 #define machine_is_msm8974()	of_machine_is_compatible("qcom,msm8974")
 #define machine_is_msm9625()	of_machine_is_compatible("qcom,msm9625")

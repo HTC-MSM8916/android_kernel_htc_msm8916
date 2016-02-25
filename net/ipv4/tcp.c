@@ -284,6 +284,11 @@
 #include <asm/uaccess.h>
 #include <asm/ioctls.h>
 
+
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
+int add_or_remove_port(struct sock *sk, int add_or_remove);
+#endif
+
 int sysctl_tcp_fin_timeout __read_mostly = TCP_FIN_TIMEOUT;
 
 int sysctl_tcp_min_tso_segs __read_mostly = 2;
@@ -2182,6 +2187,12 @@ void tcp_close(struct sock *sk, long timeout)
 	sk_stream_wait_close(sk, timeout);
 
 adjudge_to_death:
+
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
+	if (sk != NULL)
+		add_or_remove_port(sk, 0);
+#endif
+
 	state = sk->sk_state;
 	sock_hold(sk);
 	sock_orphan(sk);

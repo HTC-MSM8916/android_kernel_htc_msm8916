@@ -71,3 +71,25 @@ obj-$(CONFIG_MSM_SMCMOD) += smcmod.o
 obj-$(CONFIG_ARCH_MSM8974) += msm_mpmctr.o
 
 obj-$(CONFIG_PERFMAP) += perfmap.o
+
+# HTC Specific
+obj-y += radio_feedback.o
+
+obj-$(CONFIG_HTC_BATT_CORE) += htc_battery_core.o
+obj-$(CONFIG_HTC_BATT_8960) += htc_battery_8960.o htc_battery_cell.o
+
+obj-$(CONFIG_ARCH_MSM8916) += htc_wifi_nvs.o htc_acoustic_alsa.o board-8x16-audio.o
+
+ifdef CONFIG_BT
+	obj-$(CONFIG_ARCH_MSM8916) += htc_bdaddress.o
+endif #CONFIG_BT
+
+obj-$(CONFIG_ARCH_MSM8916) += board-htc-8916.o
+obj-$(CONFIG_ARCH_MSM8916) += devices_cmdline.o devices_dtb.o
+obj-$(CONFIG_HTC_RPM_CMD) += rpm_htc_cmd.o
+obj-$(CONFIG_ARCH_MSM8916) += htc_awb_cal.o
+obj-$(CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR) += htc_monitor.o
+obj-$(CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER) += htc_port_list.o
+obj-$(CONFIG_MSM_SCM) +=htc_sdservice.o htc_drm.o htc_rmtmsg.o htc_debug.o
+obj-y += display/
+obj-y += htc_sysinfo.o

@@ -955,6 +955,44 @@ config TOUCHSCREEN_FT5X06_GESTURE
 
          If unsure, say N.
 
+config TOUCHSCREEN_FT5X36
+	tristate "FocalTech ft5x36 touchpanel driver"
+	depends on I2C
+	help
+	  This is the main file for touchpanel driver for FocalTech ft5x36
+	  touchscreens.
+
+	  Say Y here if you have a FocalTech ft5x36 touchscreen connected
+	  to your system.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here
+
+config TOUCHSCREEN_HIMAX
+	tristate "HIMAX HM852xD serious i2c touchscreen"
+	depends on I2C
+	help
+	  This enables support for HIMAX HM852xD over I2C based touchscreens.
+
+config TOUCHSCREEN_HIMAX_ESD_EN
+	tristate "HIMAX HM852xD ESD recovery function"
+	depends on I2C
+	help
+	  This enables support ESD recovery function for HIMAX HM852xD.
+
+config TOUCHSCREEN_PROXIMITY
+	tristate "Touch proximity sensor"
+	depends on I2C
+	help
+	  If you say yes here, you turn on the touch proximity sensor feature
+
+config TOUCHSCREEN_MSG2133
+	bool  "mstar touchscreens msg2133"
+	depends on I2C
+	help
+	  Say Y here if you have a msg2133 touchscreen.
+
 config TOUCHSCREEN_MSTAR21XX
        tristate "mstar touchscreens"
        depends on I2C

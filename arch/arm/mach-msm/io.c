@@ -139,6 +139,12 @@ static struct map_desc msm8916_io_desc[] __initdata = {
 #ifdef CONFIG_DEBUG_MSM8916_UART
 	MSM_DEVICE(DEBUG_UART),
 #endif
+	{
+		.virtual =	(unsigned long) MSM_MPM_SLEEPTICK_BASE,
+		.pfn = __phys_to_pfn(MSM8916_MPM_SLEEPTICK_PHYS),
+		.length =	MSM8916_MPM_SLEEPTICK_SIZE,
+		.type = 	MT_DEVICE,
+	},
 };
 
 void __init msm_map_msm8916_io(void)

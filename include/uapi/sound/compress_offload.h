@@ -194,6 +194,9 @@ struct snd_compr_metadata {
 #define SNDRV_COMPRESS_PARTIAL_DRAIN	_IO('C', 0x36)
 #define SNDRV_COMPRESS_SET_NEXT_TRACK_PARAM\
 					_IOW('C', 0x37, union snd_codec_options)
+#ifdef CONFIG_HTC_AUD_SRS_ENABLE
+#define SNDRV_COMPRESS_ENABLE_EFFECT	_IOW('C', 0x70, int)
+#endif
 /*
  * TODO
  * 1. add mmap support

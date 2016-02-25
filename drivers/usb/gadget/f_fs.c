@@ -993,9 +993,10 @@ ffs_epfile_release(struct inode *inode, struct file *file)
 	struct ffs_epfile *epfile = inode->i_private;
 
 	ENTER();
-
-	atomic_set(&epfile->error, 1);
-	ffs_data_closed(epfile->ffs);
+	if (epfile) {
+		atomic_set(&epfile->error, 1);
+		ffs_data_closed(epfile->ffs);
+	}
 	file->private_data = NULL;
 
 	return 0;
@@ -1620,6 +1621,9 @@ static void ffs_func_free(struct ffs_function *func)
 	/* cleanup after autoconfig */
 	spin_lock_irqsave(&func->ffs->eps_lock, flags);
 	do {
+
+		if (!count)
+			break;
 		if (ep->ep && ep->req)
 			usb_ep_free_request(ep->ep, ep->req);
 		ep->req = NULL;
@@ -1672,6 +1676,11 @@ static int ffs_func_eps_enable(struct ffs_function *func)
 	unsigned long flags;
 	int ret = 0;
 
+	if (!ffs->gadget) {
+		printk(KERN_WARNING "[USB]%s:ffs->gadget=%p\n", __func__, ffs->gadget);
+		ret = -EINVAL;
+		return ret;
+	}
 	spin_lock_irqsave(&func->ffs->eps_lock, flags);
 	do {
 		struct usb_endpoint_descriptor *ds;

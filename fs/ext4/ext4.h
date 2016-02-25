@@ -1310,6 +1310,11 @@ struct ext4_sb_info {
 	/* record the last minlen when FITRIM is called. */
 	atomic_t s_last_trim_minblks;
 
+#ifdef CONFIG_EXT4_E2FSCK_RECOVER
+	struct work_struct reboot_work;
+	struct workqueue_struct *recover_wq;
+#endif
+
 	/* Reference to checksum algorithm driver via cryptoapi */
 	struct crypto_shash *s_chksum_driver;
 
@@ -2647,6 +2652,9 @@ extern int ext4_find_delalloc_range(struct inode *inode,
 extern int ext4_find_delalloc_cluster(struct inode *inode, ext4_lblk_t lblk);
 extern int ext4_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 			__u64 start, __u64 len);
+#ifdef CONFIG_EXT4_E2FSCK_RECOVER
+extern void ext4_e2fsck(struct super_block *sb);
+#endif
 
 
 /* move_extent.c */

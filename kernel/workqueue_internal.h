@@ -50,6 +50,7 @@ struct worker {
 
 	/* used only by rescuers to point to the target workqueue */
 	struct workqueue_struct	*rescue_wq;	/* I: the workqueue to rescue */
+	struct work_struct 	*previous_work;
 };
 
 /**

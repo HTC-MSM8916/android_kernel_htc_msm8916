@@ -42,6 +42,8 @@
 #include "ipc_router_private.h"
 #include "ipc_router_security.h"
 
+#include <linux/wakelock.h>
+
 enum {
 	SMEM_LOG = 1U << 0,
 	RTR_DBG = 1U << 1,
@@ -918,7 +920,7 @@ static int post_pkt_to_port(struct msm_ipc_port *port_ptr,
 	}
 
 	mutex_lock(&port_ptr->port_rx_q_lock_lhc3);
-	__pm_stay_awake(&port_ptr->port_rx_ws);
+	__pm_wakeup_event(&port_ptr->port_rx_ws, jiffies_to_msecs(10*HZ));
 	list_add_tail(&temp_pkt->list, &port_ptr->port_rx_q);
 	wake_up(&port_ptr->port_rx_wait_q);
 	notify = port_ptr->notify;

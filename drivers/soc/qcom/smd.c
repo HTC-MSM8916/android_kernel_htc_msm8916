@@ -48,6 +48,12 @@
 #include "smd_private.h"
 #include "smem_private.h"
 
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0007_FINAL_EFS_SYNC
+#include <linux/reboot.h>
+#include <mach/devices_cmdline.h>
+#include "smd_private.h"
+#endif
+
 #define SMSM_SNAPSHOT_CNT 64
 #define SMSM_SNAPSHOT_SIZE ((SMSM_NUM_ENTRIES + 1) * 4 + sizeof(uint64_t))
 #define RSPIN_INIT_WAIT_MS 1000
@@ -577,6 +583,15 @@ static struct notifier_block smsm_pm_nb = {
 	.notifier_call = smsm_pm_notifier,
 	.priority = 0,
 };
+
+#if defined(CONFIG_HTC_FEATURES_RIL_PCN0001_REBOOT_WITH_ERASE_EFS)
+int smd_smsm_erase_efs(void)
+{
+	unsigned modm = __raw_readl(SMSM_STATE_ADDR(SMSM_MODEM_STATE));
+	pr_info("smd_smsm_erase_efs: modm=[%d], r=[%d]\n", modm, (modm & SMSM_ERASE_EFS));
+	return (modm & SMSM_ERASE_EFS);
+}
+#endif
 
 /* the spinlock is used to synchronize between the
  * irq handler and code that mutates the channel
@@ -3237,6 +3252,54 @@ static __init int modem_restart_late_init(void)
 }
 late_initcall(modem_restart_late_init);
 
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0007_FINAL_EFS_SYNC
+static void set_modem_efs_sync(void)
+{
+	smsm_change_state(SMSM_APPS_STATE, SMSM_APPS_REBOOT, SMSM_APPS_REBOOT);
+	printk(KERN_INFO "[K] %s: wait for modem efs_sync\n", __func__);
+}
+
+static int check_modem_efs_sync(void)
+{
+	return (smsm_get_state(SMSM_MODEM_STATE) & SMSM_SYSTEM_PWRDWN_USR);
+}
+
+static void check_modem_efs_sync_timeout(unsigned timeout)
+{
+	while (timeout > 0 && !check_modem_efs_sync()) {
+		msleep(1000);
+		timeout--;
+	}
+	if (timeout <= 0)
+		pr_notice("%s: modem efs_sync timeout.\n", __func__);
+	else
+		pr_info("%s: modem efs_sync done.\n", __func__);
+}
+
+static int notify_efs_sync_call
+	(struct notifier_block *this, unsigned long code, void *_cmd)
+{
+	pr_info("%s:board_mfg_mode=[%d]\n", __func__, board_mfg_mode());
+
+	switch (code) {
+	case SYS_RESTART:
+	case SYS_POWER_OFF:
+		if ( board_mfg_mode() <= MFG_MODE_MINI ) {
+			set_modem_efs_sync();
+			check_modem_efs_sync_timeout(10);
+		}
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block notify_efs_sync_notifier = {
+	.notifier_call = notify_efs_sync_call,
+};
+
+#endif
+
 int __init msm_smd_init(void)
 {
 	static bool registered;
@@ -3279,6 +3342,11 @@ int __init msm_smd_init(void)
 			__func__, rc);
 		return rc;
 	}
+
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0007_FINAL_EFS_SYNC
+	register_reboot_notifier(&notify_efs_sync_notifier);
+#endif
+
 	return 0;
 }
 

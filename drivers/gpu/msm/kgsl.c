@@ -42,6 +42,7 @@
 #include "kgsl_sync.h"
 #include "adreno.h"
 #include "kgsl_compat.h"
+#include "kgsl_htc.h"
 
 #undef MODULE_PARAM_PREFIX
 #define MODULE_PARAM_PREFIX "kgsl."
@@ -591,6 +592,7 @@ out:
 	if (ret) {
 		write_lock(&device->context_lock);
 		idr_remove(&dev_priv->device->context_idr, id);
+		kgsl_dump_contextpid_locked(&dev_priv->device->context_idr);
 		write_unlock(&device->context_lock);
 	}
 
@@ -2799,6 +2801,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, struct file *vmfile)
 		goto out;
 	}
 	memdesc->sglen = sglen;
+	memdesc->sg_create = jiffies;
 
 	sg_init_table(memdesc->sg, sglen);
 
@@ -4686,6 +4689,8 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	/* Initialize common sysfs entries */
 	kgsl_pwrctrl_init_sysfs(device);
 
+	kgsl_device_htc_init(device);
+
 	dev_info(device->dev, "Initialized %s: mmu=%s\n", device->name,
 		kgsl_mmu_enabled() ? "on" : "off");
 
@@ -4836,6 +4841,8 @@ static int __init kgsl_core_init(void)
 	}
 
 	kgsl_memfree_init();
+
+	kgsl_driver_htc_init(&kgsl_driver.priv);
 
 	return 0;
 

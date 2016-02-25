@@ -2806,10 +2806,16 @@ module_init(proc_vmalloc_init);
 void get_vmalloc_info(struct vmalloc_info *vmi)
 {
 	struct vmap_area *va;
+	struct vm_struct *vm;
 	unsigned long free_area_size;
 	unsigned long prev_end;
 
 	vmi->used = 0;
+	vmi->ioremap = 0;
+	vmi->alloc = 0;
+	vmi->map = 0;
+	vmi->usermap = 0;
+	vmi->vpages = 0;
 	vmi->largest_chunk = 0;
 
 	prev_end = VMALLOC_START;
@@ -2827,15 +2833,30 @@ void get_vmalloc_info(struct vmalloc_info *vmi)
 		/*
 		 * Some archs keep another range for modules in vmalloc space
 		 */
-		if (addr < VMALLOC_START)
-			continue;
 		if (addr >= VMALLOC_END)
 			break;
+		if (!is_vmalloc_addr((void *)addr))
+			continue;
 
 		if (va->flags & (VM_LAZY_FREE | VM_LAZY_FREEING))
 			continue;
 
+		vm = va->vm;
+
 		vmi->used += (va->va_end - va->va_start);
+
+		if ((vm != NULL) && (va->flags & VM_VM_AREA)) {
+			if (vm->flags & VM_IOREMAP)
+				vmi->ioremap += vm->size;
+			if (vm->flags & VM_ALLOC)
+				vmi->alloc += vm->size;
+			if (vm->flags & VM_MAP)
+				vmi->map += vm->size;
+			if (vm->flags & VM_USERMAP)
+				vmi->usermap += vm->size;
+			if (vm->flags & VM_VPAGES)
+				vmi->vpages += vm->size;
+		}
 
 		free_area_size = addr - prev_end;
 		if (vmi->largest_chunk < free_area_size)

@@ -1420,7 +1420,14 @@ static int gpiod_request(struct gpio_desc *desc, const char *label)
 		desc_set_label(desc, label ? : "?");
 		status = 0;
 	} else {
+		const char* desc_label = NULL;
 		status = -EBUSY;
+#ifdef CONFIG_DEBUG_FS
+
+		desc_label = desc->label;
+#endif
+		pr_err("gpio_request: request gpio-%d (%s) but already occupied by %s\n",
+			desc_to_gpio(desc), label ? : "?", desc_label ? : "unknown");
 		module_put(chip->owner);
 		goto done;
 	}

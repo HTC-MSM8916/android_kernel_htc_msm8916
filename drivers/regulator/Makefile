@@ -79,5 +79,6 @@ obj-$(CONFIG_REGULATOR_RPM_SMD) += rpm-smd-regulator.o
 obj-$(CONFIG_REGULATOR_QPNP) += qpnp-regulator.o
 obj-$(CONFIG_REGULATOR_SPM) += spm-regulator.o
 obj-$(CONFIG_REGULATOR_CPR) += cpr-regulator.o
+obj-$(CONFIG_REGULATOR_NCP6924) += ncp6924.o
 
 ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG

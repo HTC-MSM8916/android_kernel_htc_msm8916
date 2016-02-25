@@ -31,6 +31,7 @@
 
 #define XO_CLK_RATE	19200000
 
+struct mdss_dsi_pwrctrl pwrctrl_pdata;
 static int mdss_dsi_pinctrl_set_state(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 					bool active);
 
@@ -52,6 +53,11 @@ static int mdss_dsi_regulator_init(struct platform_device *pdev)
 		pr_err("%s: invalid driver data\n", __func__);
 		return -EINVAL;
 	}
+
+	if (pwrctrl_pdata.dsi_regulator_init)
+		pwrctrl_pdata.dsi_regulator_init(pdev);
+	else
+		pr_info("%s: no dsi_regulator_init function is specified\n", __func__);
 
 	for (i = 0; !rc && (i < DSI_MAX_PM); i++) {
 		rc = msm_dss_config_vreg(&pdev->dev,
@@ -84,6 +90,11 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
+
+	if (ctrl_pdata->ndx) {
+		pr_debug("%s: Skip DSI1 power control\n", __func__);
+		return 0;
+	}
 
 	ret = mdss_dsi_panel_reset(pdata, 0);
 	if (ret) {
@@ -127,6 +138,7 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 	int ret = 0;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 	int i = 0;
+	int rc = 0;
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -135,6 +147,11 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
+
+	if (ctrl_pdata->ndx) {
+		pr_debug("%s: Skip DSI1 power control\n", __func__);
+		return 0;
+	}
 
 	for (i = 0; i < DSI_MAX_PM; i++) {
 		/*
@@ -179,6 +196,13 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata)
 			pr_err("%s: Panel reset failed. rc=%d\n",
 					__func__, ret);
 	}
+
+	if (pwrctrl_pdata.dsi_power_on) {
+		rc = pwrctrl_pdata.dsi_power_on(pdata, 1);
+		if (rc)
+			pr_err("%s: turn on power sequence with Error\n", __func__);
+	} else
+		pr_info("%s: not use HTC pwrctrl hook\n", __func__);
 
 error:
 	if (ret) {
@@ -504,6 +528,9 @@ panel_power_ctrl:
 		pr_err("%s: Panel power off failed\n", __func__);
 		goto end;
 	}
+
+	if (pdata->panel_info.first_power_on == 1)
+		pdata->panel_info.first_power_on = 0;
 
 	if (panel_info->dynamic_fps
 	    && (panel_info->dfps_update == DFPS_SUSPEND_RESUME_MODE)

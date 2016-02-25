@@ -11,14 +11,116 @@
 #include <linux/swap.h>
 #include <linux/vmstat.h>
 #include <linux/atomic.h>
+#ifdef CONFIG_MSM_KGSL
+#include <linux/msm_kgsl.h>
+#endif
+#ifdef CONFIG_ION
+#include <linux/msm_ion.h>
+#endif
 #include <linux/vmalloc.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include "internal.h"
 
+#define K(x) ((x) << (PAGE_SHIFT - 10))
+
 void __attribute__((weak)) arch_report_meminfo(struct seq_file *m)
 {
 }
+
+ssize_t __attribute__((weak)) report_zram_mem_used_total(void)
+{
+	return 0;
+}
+
+void show_meminfo(void)
+{
+	struct sysinfo i;
+	struct vmalloc_info vmi;
+	long cached;
+	unsigned long pages[NR_LRU_LISTS];
+	int lru;
+	unsigned long subtotal;
+#ifdef CONFIG_MSM_KGSL
+	unsigned long kgsl_alloc = kgsl_get_alloc_size(true);
+#endif
+#ifdef CONFIG_ION
+	uintptr_t ion_alloc = msm_ion_heap_meminfo(true);
+	uintptr_t ion_inuse = msm_ion_heap_meminfo(false);
+#endif
+	unsigned long zram_alloc = report_zram_mem_used_total();
+
+	si_meminfo(&i);
+	si_swapinfo(&i);
+
+	cached = global_page_state(NR_FILE_PAGES) -
+		total_swapcache_pages() - i.bufferram;
+
+	if (cached < 0)
+		cached = 0;
+
+	get_vmalloc_info(&vmi);
+
+	for (lru = LRU_BASE; lru < NR_LRU_LISTS; lru++)
+		pages[lru] = global_page_state(NR_LRU_BASE + lru);
+
+	subtotal = K(i.freeram) + K(i.bufferram) +
+		K(cached) + K(total_swapcache_pages()) +
+		K(global_page_state(NR_ANON_PAGES)) +
+		K(global_page_state(NR_SLAB_RECLAIMABLE) + global_page_state(NR_SLAB_UNRECLAIMABLE)) +
+		(global_page_state(NR_KERNEL_STACK) * THREAD_SIZE / 1024) +
+		K(global_page_state(NR_PAGETABLE)) +
+#ifdef CONFIG_MSM_KGSL
+		(kgsl_alloc >> 10) +
+#endif
+#ifdef CONFIG_ION
+		(ion_alloc >> 10) +
+#endif
+		(vmi.alloc >> 10) +
+		(zram_alloc >> 10);
+
+	printk("MemFree:        %8lu kB\n"
+			"Buffers:        %8lu kB\n"
+			"Cached:         %8lu kB\n"
+			"Shmem:          %8lu kB\n"
+			"Mlocked:        %8lu kB\n"
+			"AnonPages:      %8lu kB\n"
+			"Mapped:         %8lu kB\n"
+			"Slab:           %8lu kB\n"
+			"PageTables:     %8lu kB\n"
+			"KernelStack:    %8lu kB\n"
+			"VmallocAlloc:   %8lu kB\n"
+			"ZramAlloc:      %8lu kB\n"
+#ifdef CONFIG_MSM_KGSL
+			"KgslAlloc:      %8lu kB\n"
+#endif
+#ifdef CONFIG_ION
+			"IonTotal:       %8lu kB\n"
+			"IonInUse:       %8lu kB\n"
+#endif
+			"Subtotal:       %8lu kB\n",
+			K(i.freeram),
+			K(i.bufferram),
+			K(cached),
+			K(global_page_state(NR_SHMEM)),
+			K(global_page_state(NR_MLOCK)),
+			K(global_page_state(NR_ANON_PAGES)),
+			K(global_page_state(NR_FILE_MAPPED)),
+			K(global_page_state(NR_SLAB_RECLAIMABLE) + global_page_state(NR_SLAB_UNRECLAIMABLE)),
+			K(global_page_state(NR_PAGETABLE)),
+			global_page_state(NR_KERNEL_STACK) * THREAD_SIZE / 1024,
+			(vmi.alloc >> 10),
+			(zram_alloc >> 10),
+#ifdef CONFIG_MSM_KGSL
+			(kgsl_alloc >> 10),
+#endif
+#ifdef CONFIG_ION
+			(ion_alloc >> 10),
+			(ion_inuse >> 10),
+#endif
+			subtotal);
+}
+
 
 static int meminfo_proc_show(struct seq_file *m, void *v)
 {
@@ -29,6 +131,15 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	long cached;
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
+#ifdef CONFIG_MSM_KGSL
+	unsigned long kgsl_alloc = kgsl_get_alloc_size(false);
+#endif
+#ifdef CONFIG_ION
+	uintptr_t ion_alloc = msm_ion_heap_meminfo(true);
+	uintptr_t ion_inuse = msm_ion_heap_meminfo(false);
+#endif
+	unsigned long zram_alloc_pages;
+	long zram_save_pages;
 
 /*
  * display in kilobytes.
@@ -50,6 +161,11 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	for (lru = LRU_BASE; lru < NR_LRU_LISTS; lru++)
 		pages[lru] = global_page_state(NR_LRU_BASE + lru);
 
+	zram_alloc_pages = report_zram_mem_used_total() >> PAGE_SHIFT;
+	zram_save_pages = (i.totalswap - i.freeswap) - zram_alloc_pages;
+
+	if (zram_save_pages < 0)
+		 zram_save_pages = 0;
 	/*
 	 * Tagged format, for easy grepping and expansion.
 	 */
@@ -78,6 +194,8 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #endif
 		"SwapTotal:      %8lu kB\n"
 		"SwapFree:       %8lu kB\n"
+		"ZramAlloc:      %8lu kB\n"
+		"ZramSave:       %8lu kB\n"
 		"Dirty:          %8lu kB\n"
 		"Writeback:      %8lu kB\n"
 		"AnonPages:      %8lu kB\n"
@@ -98,7 +216,22 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		"Committed_AS:   %8lu kB\n"
 		"VmallocTotal:   %8lu kB\n"
 		"VmallocUsed:    %8lu kB\n"
+		"VmallocIoRemap: %8lu kB\n"
+		"VmallocAlloc:   %8lu kB\n"
+		"VmallocMap:     %8lu kB\n"
+		"VmallocUserMap: %8lu kB\n"
+		"VmallocVpage:   %8lu kB\n"
 		"VmallocChunk:   %8lu kB\n"
+#ifdef CONFIG_MSM_KGSL
+		"KgslAlloc:      %8lu kB\n"
+#endif
+#ifdef CONFIG_ION
+		"IonTotal:       %8lu kB\n"
+		"IonInUse:       %8lu kB\n"
+#endif
+#ifdef CONFIG_CMA
+		"FreeCma:        %8lu kB\n"
+#endif
 #ifdef CONFIG_MEMORY_FAILURE
 		"HardwareCorrupted: %5lu kB\n"
 #endif
@@ -130,6 +263,8 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 #endif
 		K(i.totalswap),
 		K(i.freeswap),
+		K(zram_alloc_pages),
+		K(zram_save_pages),
 		K(global_page_state(NR_FILE_DIRTY)),
 		K(global_page_state(NR_WRITEBACK)),
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
@@ -157,7 +292,22 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		K(committed),
 		(unsigned long)VMALLOC_TOTAL >> 10,
 		vmi.used >> 10,
+		vmi.ioremap >> 10,
+		vmi.alloc >> 10,
+		vmi.map >> 10,
+		vmi.usermap >> 10,
+		vmi.vpages >> 10,
 		vmi.largest_chunk >> 10
+#ifdef CONFIG_MSM_KGSL
+		,kgsl_alloc >> 10
+#endif
+#ifdef CONFIG_ION
+		,ion_alloc >> 10
+		,ion_inuse >> 10
+#endif
+#ifdef CONFIG_CMA
+		,K(global_page_state(NR_FREE_CMA_PAGES))
+#endif
 #ifdef CONFIG_MEMORY_FAILURE
 		,atomic_long_read(&num_poisoned_pages) << (PAGE_SHIFT - 10)
 #endif

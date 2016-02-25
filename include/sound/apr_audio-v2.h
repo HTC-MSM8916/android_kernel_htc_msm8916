@@ -2471,6 +2471,8 @@ struct afe_port_cmdrsp_get_param_v2 {
 #define ADM_CMD_COPP_OPEN_TOPOLOGY_ID_DTS_HPX_1		0x00010348
 #define ADM_CMD_COPP_OPEN_TOPOLOGY_ID_AUDIOSPHERE	0x10015003
 
+#define HTC_POPP_TOPOLOGY				0x10000002
+
 /* Memory map regions command payload used by the
  * #ASM_CMD_SHARED_MEM_MAP_REGIONS ,#ADM_CMD_SHARED_MEM_MAP_REGIONS
  * commands.
@@ -7858,6 +7860,13 @@ struct asm_mtmx_strtr_params {
 	u32 window_lsw;
 	u32 window_msw;
 } __packed;
+
+struct asm_params {
+	struct apr_hdr hdr;
+	struct asm_stream_cmd_set_pp_params_v2 param;
+	struct asm_stream_param_data_v2 data;
+} __packed;
+
 #define AUDPROC_MODULE_ID_RESAMPLER 0x00010719
 
 enum {

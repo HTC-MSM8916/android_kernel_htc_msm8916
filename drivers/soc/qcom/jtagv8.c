@@ -53,8 +53,6 @@
 #define TZ_DBG_ETM_FEAT_ID	(0x8)
 #define TZ_DBG_ETM_VER		(0x400000)
 
-uint32_t msm_jtag_save_cntr[NR_CPUS];
-uint32_t msm_jtag_restore_cntr[NR_CPUS];
 
 /* access debug registers using system instructions */
 struct dbg_cpu_ctx {
@@ -843,6 +841,7 @@ static void dbg_init_arch_data(void)
 }
 #endif
 
+#if 0
 /*
  * msm_jtag_save_state - save debug registers
  *
@@ -906,6 +905,7 @@ void msm_jtag_restore_state(void)
 	msm_jtag_mm_restore_state();
 }
 EXPORT_SYMBOL(msm_jtag_restore_state);
+#endif
 
 static inline bool dbg_arch_supported(uint8_t arch)
 {

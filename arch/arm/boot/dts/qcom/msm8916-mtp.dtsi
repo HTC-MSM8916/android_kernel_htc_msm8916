@@ -16,7 +16,7 @@
 
 / {
 	aliases {
-		serial0 = &blsp1_uart2;
+		serial0 = &blsp1_uart1;
 	};
 };
 
@@ -206,7 +206,7 @@
 	};
 };
 
-&blsp1_uart2 {
+&blsp1_uart1 {
 	status = "ok";
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart_console_sleep>;
@@ -247,10 +247,6 @@
 			debounce-interval = <15>;
 		};
 	};
-};
-
-&blsp1_uart1 {
-	status = "ok";
 };
 
 &sdhc_1 {

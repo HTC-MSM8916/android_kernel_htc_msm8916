@@ -68,3 +68,9 @@ obj-$(CONFIG_QPNP_MISC) += qpnp-misc.o
 obj-$(CONFIG_QCOM_LIQUID_DOCK)	+= qcom_liquid_dock.o
 obj-y				+= qcom/
 obj-$(CONFIG_UID_CPUTIME) 	+= uid_cputime.o
+
+obj-$(CONFIG_CABLE_DETECT_8XXX) += cable_detect_8xxx.o
+obj-y				+= headset/
+obj-$(CONFIG_VIB_TRIGGERS)	+= vib-triggers.o
+obj-$(CONFIG_QPNP_VIBRATOR) += qpnp-vibrator.o
+obj-y += time_helper.o

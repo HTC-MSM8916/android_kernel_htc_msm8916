@@ -2538,11 +2538,18 @@ static struct v4l2_ctrl **get_super_cluster(struct msm_vidc_inst *inst,
 				int *size)
 {
 	int c = 0, sz = 0;
-	struct v4l2_ctrl **cluster = kmalloc(sizeof(struct v4l2_ctrl *) *
-			NUM_CTRLS, GFP_KERNEL);
 
-	if (!size || !cluster || !inst)
+	struct v4l2_ctrl **cluster;
+	if (!size || !inst) {
+		dprintk(VIDC_ERR, "%s - invalid input\n", __func__);
 		return NULL;
+	}
+	cluster = kmalloc(sizeof(struct v4l2_ctrl *) *
+				NUM_CTRLS, GFP_KERNEL);
+	if (!cluster) {
+		dprintk(VIDC_ERR, "%s - NULL cluster!!\n", __func__);
+		return NULL;
+	}
 
 	for (c = 0; c < NUM_CTRLS; c++)
 		cluster[sz++] = inst->ctrls[c];

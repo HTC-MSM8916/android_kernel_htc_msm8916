@@ -27,6 +27,7 @@
 #include <linux/hrtimer.h>
 #include <linux/power_supply.h>
 #include <linux/cdev.h>
+#include <mach/board.h>
 /*
  * The following are bit fields describing the usb_request.udc_priv word.
  * These bit fields are set by function drivers that wish to queue
@@ -534,6 +535,12 @@ struct msm_otg {
 #define XO_SHUTDOWN			BIT(2)
 #define CLOCKS_DOWN			BIT(3)
 #define PHY_REGULATORS_LPM	BIT(4)
+	struct work_struct notifier_work;
+	enum usb_connect_type connect_type;
+	int connect_type_ready;
+	struct workqueue_struct *usb_wq;
+	struct wake_lock cable_detect_wlock;
+	int chg_check_count;
 	int reset_counter;
 	unsigned long b_last_se0_sess;
 	unsigned long tmouts;
@@ -557,6 +564,7 @@ struct msm_otg {
 	int ui_enabled;
 	bool pm_done;
 	struct qpnp_vadc_chip	*vadc_dev;
+	struct qpnp_vadc_chip	*vadc_chip;
 	int ext_id_irq;
 	bool phy_irq_pending;
 	wait_queue_head_t	host_suspend_wait;

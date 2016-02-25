@@ -180,6 +180,11 @@ pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms)
 
 struct vmalloc_info {
 	unsigned long   used;
+	unsigned long   ioremap;
+	unsigned long   alloc;
+	unsigned long   map;
+	unsigned long   usermap;
+	unsigned long   vpages;
 	unsigned long   largest_chunk;
 };
 
@@ -197,6 +202,11 @@ extern void get_vmalloc_info(struct vmalloc_info *vmi);
 #define get_vmalloc_info(vmi)			\
 do {						\
 	(vmi)->used = 0;			\
+	(vmi)->ioremap = 0;             \
+	(vmi)->alloc = 0;               \
+	(vmi)->map = 0;         \
+	(vmi)->usermap = 0;             \
+	(vmi)->vpages = 0;              \
 	(vmi)->largest_chunk = 0;		\
 } while (0)
 #endif

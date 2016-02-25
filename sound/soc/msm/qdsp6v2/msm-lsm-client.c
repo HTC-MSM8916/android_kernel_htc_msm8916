@@ -899,33 +899,38 @@ static int msm_lsm_ioctl_shared(struct snd_pcm_substream *substream,
 					__func__);
 				break;
 			}
-			if (user->payload_size <
-			    prtd->event_status->payload_size) {
-				dev_dbg(rtd->dev,
-					"%s: provided %d bytes isn't enough, needs %d bytes\n",
-					__func__, user->payload_size,
-					prtd->event_status->payload_size);
-				rc = -ENOMEM;
-			} else {
-				memcpy(user, prtd->event_status, size);
-				if (prtd->lsm_client->lab_enable
-					&& !prtd->lsm_client->lab_started
-					&& prtd->event_status->status ==
-					LSM_VOICE_WAKEUP_STATUS_DETECTED) {
-					atomic_set(&prtd->read_abort, 0);
-					atomic_set(&prtd->buf_count, 0);
-					prtd->appl_cnt = 0;
-					prtd->dma_write = 0;
-					rc = msm_lsm_queue_lab_buffer(prtd,
-						0);
-					if (rc)
-						dev_err(rtd->dev,
-							"%s: Queue buffer failed for lab rc = %d\n",
-							__func__, rc);
-					else
-						prtd->lsm_client->lab_started
-						= true;
+			if (prtd->event_status) {
+				if (user->payload_size <
+				    prtd->event_status->payload_size) {
+					dev_dbg(rtd->dev,
+						"%s: provided %d bytes isn't enough, needs %d bytes\n",
+						__func__, user->payload_size,
+						prtd->event_status->payload_size);
+					rc = -ENOMEM;
+				} else {
+					memcpy(user, prtd->event_status, size);
+					if (prtd->lsm_client->lab_enable
+						&& !prtd->lsm_client->lab_started
+						&& prtd->event_status->status ==
+						LSM_VOICE_WAKEUP_STATUS_DETECTED) {
+						atomic_set(&prtd->read_abort, 0);
+						atomic_set(&prtd->buf_count, 0);
+						prtd->appl_cnt = 0;
+						prtd->dma_write = 0;
+						rc = msm_lsm_queue_lab_buffer(prtd,
+							0);
+						if (rc)
+							dev_err(rtd->dev,
+								"%s: Queue buffer failed for lab rc = %d\n",
+								__func__, rc);
+							else
+							prtd->lsm_client->lab_started
+							= true;
+					}
 				}
+			} else {
+				pr_err("%s: event status is null\n", __func__);
+				rc = -ENOMEM;
 			}
 		} else if (xchg) {
 			dev_dbg(rtd->dev, "%s: Wait aborted\n", __func__);
@@ -1611,21 +1616,23 @@ static int msm_lsm_ioctl(struct snd_pcm_substream *substream,
 			user->payload_size = userarg.payload_size;
 			err = msm_lsm_ioctl_shared(substream, cmd, user);
 		}
-		/* Update size with actual payload size */
-		size = sizeof(*user) + user->payload_size;
-		if (!err && !access_ok(VERIFY_WRITE, arg, size)) {
-			dev_err(rtd->dev,
-				"%s: write verify failed size %d\n",
-				__func__, size);
-			err = -EFAULT;
+		if (user) {
+			/* Update size with actual payload size */
+			size = sizeof(*user) + user->payload_size;
+			if (!err && !access_ok(VERIFY_WRITE, arg, size)) {
+				dev_err(rtd->dev,
+					"%s: write verify failed size %d\n",
+					__func__, size);
+				err = -EFAULT;
+			}
+			if (!err && (copy_to_user(arg, user, size))) {
+				dev_err(rtd->dev,
+					"%s: failed to copy payload %d",
+					__func__, size);
+				err = -EFAULT;
+			}
+			kfree(user);
 		}
-		if (!err && (copy_to_user(arg, user, size))) {
-			dev_err(rtd->dev,
-				"%s: failed to copy payload %d",
-				__func__, size);
-			err = -EFAULT;
-		}
-		kfree(user);
 		if (err)
 			dev_err(rtd->dev,
 				"%s: lsmevent failed %d", __func__, err);

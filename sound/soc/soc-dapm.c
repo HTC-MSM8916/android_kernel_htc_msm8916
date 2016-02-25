@@ -80,7 +80,11 @@ static int dapm_down_seq[] = {
 	[snd_soc_dapm_aif_in] = 1,
 	[snd_soc_dapm_aif_out] = 1,
 	[snd_soc_dapm_adc] = 5,
+#ifdef CONFIG_AMP_TPA6130A2
+	[snd_soc_dapm_hp] = 0,
+#else
 	[snd_soc_dapm_hp] = 2,
+#endif
 	[snd_soc_dapm_spk] = 2,
 	[snd_soc_dapm_line] = 2,
 	[snd_soc_dapm_out_drv] = 2,
@@ -3402,6 +3406,7 @@ int snd_soc_dapm_new_dai_widgets(struct snd_soc_dapm_context *dapm,
 		if (!w) {
 			dev_err(dapm->dev, "ASoC: Failed to create %s widget\n",
 				dai->driver->playback.stream_name);
+			return -ENOMEM;
 		}
 
 		w->priv = dai;
@@ -3420,6 +3425,7 @@ int snd_soc_dapm_new_dai_widgets(struct snd_soc_dapm_context *dapm,
 		if (!w) {
 			dev_err(dapm->dev, "ASoC: Failed to create %s widget\n",
 				dai->driver->capture.stream_name);
+			return -ENOMEM;
 		}
 
 		w->priv = dai;

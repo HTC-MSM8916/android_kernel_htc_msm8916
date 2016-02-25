@@ -13,6 +13,7 @@
 #include <linux/gpio.h>
 #include <linux/pinctrl/consumer.h>
 
+#include <linux/usb/htc_info.h>
 #include "ci13xxx_udc.c"
 
 #define MSM_USB_BASE	(udc->regs)

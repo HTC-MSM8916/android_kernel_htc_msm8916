@@ -138,6 +138,10 @@ static inline int current_has_network(void)
  */
 static struct list_head inetsw[SOCK_MAX];
 static DEFINE_SPINLOCK(inetsw_lock);
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+void (*record_probe_data_fp)(struct sock *sk, int type, size_t size, unsigned long long t_pre) = NULL;
+EXPORT_SYMBOL(record_probe_data_fp);
+#endif
 
 struct ipv4_config ipv4_config;
 EXPORT_SYMBOL(ipv4_config);
@@ -460,6 +464,10 @@ int inet_release(struct socket *sock)
 		    !(current->flags & PF_EXITING))
 			timeout = sk->sk_lingertime;
 		sock->sk = NULL;
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+		if (record_probe_data_fp)
+			record_probe_data_fp(sk, 6, 0,0);
+#endif
 		sk->sk_prot->close(sk, timeout);
 	}
 	return 0;
@@ -568,6 +576,9 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 		       int addr_len, int flags)
 {
 	struct sock *sk = sock->sk;
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+	int err;
+#endif
 
 	if (addr_len < sizeof(uaddr->sa_family))
 		return -EINVAL;
@@ -576,7 +587,14 @@ int inet_dgram_connect(struct socket *sock, struct sockaddr *uaddr,
 
 	if (!inet_sk(sk)->inet_num && inet_autobind(sk))
 		return -EAGAIN;
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+	err=sk->sk_prot->connect(sk, uaddr, addr_len);
+	if (0==err && record_probe_data_fp)
+		record_probe_data_fp(sk, 5, 0,0);
+	return err;
+#else
 	return sk->sk_prot->connect(sk, uaddr, addr_len);
+#endif
 }
 EXPORT_SYMBOL(inet_dgram_connect);
 
@@ -605,6 +623,9 @@ static long inet_wait_for_connect(struct sock *sk, long timeo, int writebias)
 	return timeo;
 }
 
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
+int add_or_remove_port(struct sock *sk, int add_or_remove);
+#endif
 /*
  *	Connect to a remote host. There is regrettably still a little
  *	TCP 'magic' in here.
@@ -644,9 +665,17 @@ int __inet_stream_connect(struct socket *sock, struct sockaddr *uaddr,
 		err = sk->sk_prot->connect(sk, uaddr, addr_len);
 		if (err < 0)
 			goto out;
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+		if(record_probe_data_fp)
+			record_probe_data_fp(sk, 4, 0,0);
+#endif
 
 		sock->state = SS_CONNECTING;
 
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0004_HTC_GARBAGE_FILTER
+		if (sk != NULL)
+			add_or_remove_port(sk, 1);
+#endif
 		/* Just entered SS_CONNECTING state; the only
 		 * difference is that return value in non-blocking
 		 * case is EINPROGRESS, rather than EALREADY.
@@ -724,6 +753,10 @@ int inet_accept(struct socket *sock, struct socket *newsock, int flags)
 	lock_sock(sk2);
 
 	sock_rps_record_flow(sk2);
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+	if(record_probe_data_fp)
+		record_probe_data_fp(sk2, 3, 0,0);
+#endif
 	WARN_ON(!((1 << sk2->sk_state) &
 		  (TCPF_ESTABLISHED | TCPF_SYN_RECV |
 		  TCPF_CLOSE_WAIT | TCPF_CLOSE)));
@@ -774,6 +807,10 @@ int inet_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
 		 size_t size)
 {
 	struct sock *sk = sock->sk;
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+	int err;
+	unsigned long long t_pre;
+#endif
 
 	sock_rps_record_flow(sk);
 
@@ -781,8 +818,15 @@ int inet_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
 	if (!inet_sk(sk)->inet_num && !sk->sk_prot->no_autobind &&
 	    inet_autobind(sk))
 		return -EAGAIN;
-
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+	t_pre=sched_clock();
+	err=sk->sk_prot->sendmsg(iocb, sk, msg, size);
+	if (err >= 0 && record_probe_data_fp)
+		record_probe_data_fp(sk, 1, size,t_pre);
+	return err;
+#else
 	return sk->sk_prot->sendmsg(iocb, sk, msg, size);
+#endif
 }
 EXPORT_SYMBOL(inet_sendmsg);
 
@@ -810,13 +854,25 @@ int inet_recvmsg(struct kiocb *iocb, struct socket *sock, struct msghdr *msg,
 	struct sock *sk = sock->sk;
 	int addr_len = 0;
 	int err;
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+	unsigned long long t_pre;
+#endif
 
 	sock_rps_record_flow(sk);
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+	t_pre=sched_clock();
+#endif
 
 	err = sk->sk_prot->recvmsg(iocb, sk, msg, size, flags & MSG_DONTWAIT,
 				   flags & ~MSG_DONTWAIT, &addr_len);
 	if (err >= 0)
+	{
 		msg->msg_namelen = addr_len;
+#ifdef CONFIG_HTC_FEATURES_RIL_PCN0003_HTC_MONITOR
+		if(record_probe_data_fp)
+			record_probe_data_fp(sk, 2, size,t_pre);
+#endif
+	}
 	return err;
 }
 EXPORT_SYMBOL(inet_recvmsg);

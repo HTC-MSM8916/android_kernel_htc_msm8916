@@ -140,8 +140,12 @@ static int range_alloc(struct ashmem_area *asma,
 	struct ashmem_range *range;
 
 	range = kmem_cache_zalloc(ashmem_range_cachep, GFP_KERNEL);
-	if (unlikely(!range))
+	if (unlikely(!range)) {
+		pr_err("ashmem: %s failed on %s(%d)\n", __func__, current->comm, current->pid);
+		show_mem(SHOW_MEM_FILTER_NODES);
+		dump_stack();
 		return -ENOMEM;
+	}
 
 	range->asma = asma;
 	range->pgstart = start;
@@ -191,8 +195,12 @@ static int ashmem_open(struct inode *inode, struct file *file)
 		return ret;
 
 	asma = kmem_cache_zalloc(ashmem_area_cachep, GFP_KERNEL);
-	if (unlikely(!asma))
+	if (unlikely(!asma)) {
+		pr_err("ashmem: %s failed on %s(%d)\n", __func__, current->comm, current->pid);
+		show_mem(SHOW_MEM_FILTER_NODES);
+		dump_stack();
 		return -ENOMEM;
+	}
 
 	INIT_LIST_HEAD(&asma->unpinned_list);
 	memcpy(asma->name, ASHMEM_NAME_PREFIX, ASHMEM_NAME_PREFIX_LEN);

@@ -181,6 +181,18 @@ config LEDS_GPIO
 	  defined as platform devices and/or OpenFirmware platform devices.
 	  The code to use these bindings can be selected below.
 
+config FLASHLIGHT_TPS61310
+	tristate "TI TPS61310 flashlight"
+	help
+	  Say Y here to enable the TI TPS61310 flashlight
+
+config FLASHLIGHT_1500mA
+	bool "FLASHLIGHT_1500mA"
+	depends on FLASHLIGHT_TPS61310
+	default n
+	help
+	  Say Y here to enable the TI TPS61310 flashlight
+
 config LEDS_LP3944
 	tristate "LED Support for N.S. LP3944 (Fun Light) I2C chip"
 	depends on LEDS_CLASS
@@ -202,6 +214,16 @@ config LEDS_LP55XX_COMMON
 	  devices.
 
 config LEDS_LP5521
+	tristate "LED Support for N.S. LP5521 LED driver chip"
+	depends on LEDS_CLASS && I2C
+	select LEDS_LP55XX_COMMON
+	help
+	  If you say yes here you get support for the National Semiconductor
+	  LP5521 LED driver. It is 3 channel chip with programmable engines.
+	  Driver provides direct control via LED class and interface for
+	  programming the engines.
+
+config LEDS_LP5521_HTC
 	tristate "LED Support for N.S. LP5521 LED driver chip"
 	depends on LEDS_CLASS && I2C
 	select LEDS_LP55XX_COMMON
@@ -524,6 +546,13 @@ config LEDS_AW2013
 	help
 	  This option enables support for the AW2013 RGB LED connected
 	  through I2C. Say Y to enable support for the AW2013 LED.
+
+config LEDS_LED_BRIGHTNESS_LEVEL
+	tristate "LED support for led brightness level"
+	depends on LEDS_CLASS
+	depends on I2C
+	help
+	  This option about led brightness level
 
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"

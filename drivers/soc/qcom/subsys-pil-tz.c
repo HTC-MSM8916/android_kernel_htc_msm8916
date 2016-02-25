@@ -31,6 +31,10 @@
 #include <soc/qcom/scm.h>
 
 #include <soc/qcom/smem.h>
+#if defined(CONFIG_HTC_FEATURES_SSR)
+#include <mach/devices_dtb.h>
+#include <mach/devices_cmdline.h>
+#endif
 
 #include "peripheral-loader.h"
 
@@ -963,6 +967,21 @@ static int pil_tz_driver_probe(struct platform_device *pdev)
 		rc = PTR_ERR(d->subsys);
 		goto err_subsys;
 	}
+
+#if defined(CONFIG_HTC_FEATURES_SSR)
+#if defined(CONFIG_HTC_FEATURES_SSR_WCNSS_ENABLE)
+	subsys_set_restart_level(d->subsys, RESET_SUBSYS_COUPLED);
+
+    if (get_radio_flag() & BIT(3))
+        subsys_set_enable_ramdump(d->subsys, ENABLE_RAMDUMP);
+#else
+	if (get_kernel_flag() & KERNEL_FLAG_ENABLE_SSR_WCNSS)
+		subsys_set_restart_level(d->subsys, RESET_SUBSYS_COUPLED);
+#endif
+
+	if (board_mfg_mode() != 0)
+		subsys_set_restart_level(d->subsys, RESET_SOC);
+#endif
 
 	return 0;
 err_subsys:

@@ -24,6 +24,13 @@
 #include <linux/input.h>
 #include <linux/log2.h>
 #include <linux/qpnp/power-on.h>
+#ifdef CONFIG_HTC_POWER_DEBUG
+#include <soc/qcom/htc_util.h>
+#endif
+#if defined(CONFIG_CLR_KPDPWR_RESET_BATT_RMV) || \
+	defined(CONFIG_POWER_KEY_CLR_RESET)
+#include <mach/devices_dtb.h>
+#endif
 
 #define CREATE_MASK(NUM_BITS, POS) \
 	((unsigned char) (((1 << (NUM_BITS)) - 1) << (POS)))
@@ -125,13 +132,6 @@
 
 #define QPNP_POFF_REASON_UVLO			13
 
-enum pon_type {
-	PON_KPDPWR,
-	PON_RESIN,
-	PON_CBLPWR,
-	PON_KPDPWR_RESIN,
-};
-
 struct qpnp_pon_config {
 	u32 pon_type;
 	u32 support_reset;
@@ -166,6 +166,10 @@ struct qpnp_pon {
 };
 
 static struct qpnp_pon *sys_reset_dev;
+
+#ifdef CONFIG_QPNP_KEY_INPUT
+u32 qpnp_key_input;
+#endif
 
 static u32 s1_delay[PON_S1_COUNT_MAX + 1] = {
 	0 , 32, 56, 80, 138, 184, 272, 408, 608, 904, 1352, 2048,
@@ -594,17 +598,23 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 					cfg->key_code, pon_rt_sts);
 	key_status = pon_rt_sts & pon_rt_bit;
 
+#if !defined(CONFIG_INPUT_GPIO) || defined(CONFIG_QPNP_KEY_INPUT)
+	pr_info("[KEY] PMIC input: code=%d, pon_type=0x%x, key_status=0x%x\n",
+					cfg->key_code, cfg->pon_type, key_status);
 	/* simulate press event in case release event occured
 	 * without a press event
 	 */
 	if (!cfg->old_state && !key_status) {
+		pr_info("[KEY] simulate press event, code=0x%x\n", cfg->key_code);
 		input_report_key(pon->pon_input, cfg->key_code, 1);
 		input_sync(pon->pon_input);
 	}
 
-	input_report_key(pon->pon_input, cfg->key_code, key_status);
-	input_sync(pon->pon_input);
-
+	if (qpnp_key_input) {
+		input_report_key(pon->pon_input, cfg->key_code, key_status);
+		input_sync(pon->pon_input);
+	}
+#endif
 	cfg->old_state = !!key_status;
 
 	return 0;
@@ -733,25 +743,27 @@ static void bark_work_func(struct work_struct *work)
 		dev_err(&pon->spmi->dev, "Unable to read PON RT status\n");
 		goto err_return;
 	}
+#if !defined(CONFIG_INPUT_GPIO) || defined(CONFIG_QPNP_KEY_INPUT)
+	if (qpnp_key_input) {
+		if (!(pon_rt_sts & QPNP_PON_RESIN_BARK_N_SET)) {
 
-	if (!(pon_rt_sts & QPNP_PON_RESIN_BARK_N_SET)) {
-		/* report the key event and enable the bark IRQ */
-		input_report_key(pon->pon_input, cfg->key_code, 0);
-		input_sync(pon->pon_input);
-		enable_irq(cfg->bark_irq);
-	} else {
-		/* disable reset */
-		rc = qpnp_pon_masked_write(pon, cfg->s2_cntl2_addr,
-				QPNP_PON_S2_CNTL_EN, 0);
-		if (rc) {
-			dev_err(&pon->spmi->dev,
-				"Unable to configure S2 enable\n");
-			goto err_return;
+			input_report_key(pon->pon_input, cfg->key_code, 0);
+			input_sync(pon->pon_input);
+			enable_irq(cfg->bark_irq);
+		} else {
+
+			rc = qpnp_pon_masked_write(pon, cfg->s2_cntl2_addr,
+					QPNP_PON_S2_CNTL_EN, 0);
+			if (rc) {
+				dev_err(&pon->spmi->dev,
+					"Unable to configure S2 enable\n");
+				goto err_return;
+			}
+
+			schedule_delayed_work(&pon->bark_work, QPNP_KEY_STATUS_DELAY);
 		}
-		/* re-arm the work */
-		schedule_delayed_work(&pon->bark_work, QPNP_KEY_STATUS_DELAY);
 	}
-
+#endif
 err_return:
 	return;
 }
@@ -779,14 +791,161 @@ static irqreturn_t qpnp_resin_bark_irq(int irq, void *_pon)
 		goto err_exit;
 	}
 
+#if !defined(CONFIG_INPUT_GPIO) || defined(CONFIG_QPNP_KEY_INPUT)
 	/* report the key event */
 	input_report_key(pon->pon_input, cfg->key_code, 1);
 	input_sync(pon->pon_input);
+#endif
 	/* schedule work to check the bark status for key-release */
 	schedule_delayed_work(&pon->bark_work, QPNP_KEY_STATUS_DELAY);
 err_exit:
 	return IRQ_HANDLED;
 }
+
+#if defined(CONFIG_CLR_KPDPWR_RESET_BATT_RMV) || \
+    defined(CONFIG_POWER_KEY_CLR_RESET)
+#define PON_S1_TIMER_MS_1352	0xA
+#define PON_S1_TIMER_MS_10256	0xF
+#define PON_S2_TIMER_S_1	0x6
+#define PON_S2_TIMER_S_2	0x7
+#define PON_WARM_RESET		0x1
+#define PON_DVDD_HARD_RESET	0x8
+
+int qpnp_get_reset_en(int pon_type)
+{
+	u16 rst_en_reg;
+	struct qpnp_pon *pon = sys_reset_dev;
+	int rc;
+	u8 val = 0;
+
+	if (pon == NULL)
+		return -ENOMEM;
+
+	switch (pon_type) {
+	case PON_KPDPWR:
+		rst_en_reg = QPNP_PON_KPDPWR_S2_CNTL2(pon->base);
+		break;
+	case PON_RESIN:
+		rst_en_reg = QPNP_PON_RESIN_S2_CNTL2(pon->base);
+		break;
+	case PON_KPDPWR_RESIN:
+		rst_en_reg = QPNP_PON_KPDPWR_RESIN_S2_CNTL2(pon->base);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	rc = spmi_ext_register_readl(pon->spmi->ctrl, pon->spmi->sid,
+			rst_en_reg, &val, 1);
+	if (rc) {
+		dev_err(&pon->spmi->dev,
+			"%s: Unable to read addr = %x, rc(%d)\n", __func__, rst_en_reg, rc);
+		return -EINVAL;
+	}
+
+	if (val & QPNP_PON_S2_RESET_ENABLE)
+		return 1;
+	else
+		return 0;
+}
+
+int qpnp_config_reset_ctrl(int pon_type, int s1_timer, int s2_timer, int reset_type)
+{
+	u16 rst_type_reg, rst_s1_timer_reg, rst_s2_timer_reg;
+	struct qpnp_pon *pon = sys_reset_dev;
+	int rc;
+
+	if (pon == NULL)
+		return -ENOMEM;
+
+	switch (pon_type) {
+	case PON_KPDPWR:
+		rst_type_reg = QPNP_PON_KPDPWR_S2_CNTL(pon->base);
+		rst_s1_timer_reg = QPNP_PON_KPDPWR_S1_TIMER(pon->base);
+		rst_s2_timer_reg = QPNP_PON_KPDPWR_S2_TIMER(pon->base);
+		break;
+	case PON_RESIN:
+		rst_type_reg = QPNP_PON_RESIN_S2_CNTL(pon->base);
+		rst_s1_timer_reg = QPNP_PON_RESIN_S1_TIMER(pon->base);
+		rst_s2_timer_reg = QPNP_PON_RESIN_S2_TIMER(pon->base);
+		break;
+	case PON_KPDPWR_RESIN:
+		rst_type_reg = QPNP_PON_KPDPWR_RESIN_S2_CNTL(pon->base);
+		rst_s1_timer_reg = QPNP_PON_KPDPWR_RESIN_S1_TIMER(pon->base);
+		rst_s2_timer_reg = QPNP_PON_KPDPWR_RESIN_S2_TIMER(pon->base);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+
+	rc = qpnp_pon_masked_write(pon, rst_type_reg,
+					QPNP_PON_S2_CNTL_TYPE_MASK, reset_type);
+	if (rc) {
+		dev_err(&pon->spmi->dev,
+				"%s: Unable to write to addr = %x, rc(%d)\n", __func__, rst_type_reg, rc);
+		return -EINVAL;
+	}
+
+
+	rc = qpnp_pon_masked_write(pon, rst_s1_timer_reg,
+					QPNP_PON_S1_TIMER_MASK, s1_timer);
+	if (rc) {
+		dev_err(&pon->spmi->dev,
+				"%s: Unable to write to addr = %x, rc(%d)\n", __func__, rst_s1_timer_reg, rc);
+		return -EINVAL;
+	}
+
+
+	rc = qpnp_pon_masked_write(pon, rst_s2_timer_reg,
+					QPNP_PON_S2_TIMER_MASK, s2_timer);
+	if (rc) {
+		dev_err(&pon->spmi->dev,
+				"%s: Unable to write to addr = %x, rc(%d)\n", __func__, rst_s2_timer_reg, rc);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+int qpnp_config_reset_enable(int pon_type, int en)
+{
+	u16 rst_en_reg;
+	struct qpnp_pon *pon = sys_reset_dev;
+	int rc;
+
+	if (pon == NULL)
+		return -ENOMEM;
+
+	switch (pon_type) {
+	case PON_KPDPWR:
+		rst_en_reg = QPNP_PON_KPDPWR_S2_CNTL2(pon->base);
+		break;
+	case PON_RESIN:
+		rst_en_reg = QPNP_PON_RESIN_S2_CNTL2(pon->base);
+		break;
+	case PON_KPDPWR_RESIN:
+		rst_en_reg = QPNP_PON_KPDPWR_RESIN_S2_CNTL2(pon->base);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (en)
+		rc = qpnp_pon_masked_write(pon, rst_en_reg, QPNP_PON_RESET_EN,
+							QPNP_PON_S2_RESET_ENABLE);
+	else
+		rc = qpnp_pon_masked_write(pon, rst_en_reg, QPNP_PON_RESET_EN, 0);
+
+	if (rc) {
+		dev_err(&pon->spmi->dev,
+				"%s: Unable to write to addr = %x, rc(%d)\n", __func__, rst_en_reg, rc);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+#endif
 
 static int
 qpnp_config_pull(struct qpnp_pon *pon, struct qpnp_pon_config *cfg)
@@ -1311,6 +1470,7 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 				goto unreg_input_dev;
 			}
 		} else if (cfg->pon_type != PON_CBLPWR) {
+#ifndef CONFIG_ARCH_MSM8916
 			/* disable S2 reset */
 			rc = qpnp_pon_masked_write(pon, cfg->s2_cntl2_addr,
 						QPNP_PON_S2_CNTL_EN, 0);
@@ -1319,6 +1479,7 @@ static int qpnp_pon_config_init(struct qpnp_pon *pon)
 					"Unable to disable S2 reset\n");
 				goto unreg_input_dev;
 			}
+#endif
 		}
 
 		rc = qpnp_pon_request_irqs(pon, cfg);
@@ -1484,6 +1645,9 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 	u16 poff_sts = 0;
 	const char *s3_src;
 	u8 s3_src_reg;
+#ifdef CONFIG_HTC_POWER_DEBUG
+	u8 warm_reset_stat = 0;
+#endif
 
 	pon = devm_kzalloc(&spmi->dev, sizeof(struct qpnp_pon),
 							GFP_KERNEL);
@@ -1500,6 +1664,13 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 	} else if (sys_reset) {
 		sys_reset_dev = pon;
 	}
+
+#ifdef CONFIG_QPNP_KEY_INPUT
+	rc = of_property_read_u32(spmi->dev.of_node, "qpnp_key_input", &qpnp_key_input);
+	if (rc < 0)
+		qpnp_key_input = 0;
+	dev_info(&spmi->dev, "qpnp_key_input = %d\n", qpnp_key_input);
+#endif
 
 	pon->spmi = spmi;
 
@@ -1584,6 +1755,13 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 			panic("An UVLO was occurred.");
 	}
 
+#ifdef CONFIG_HTC_POWER_DEBUG
+	rc = spmi_ext_register_readl(pon->spmi->ctrl, pon->spmi->sid,
+				QPNP_PON_WARM_RESET_REASON1(pon->base),
+				&warm_reset_stat, 1);
+	htc_set_pon_reason(cold_boot, ffs(pon_sts) - 1, ffs(warm_reset_stat) - 1, ffs(poff_sts) - 1);
+#endif
+
 	/* program s3 debounce */
 	rc = of_property_read_u32(pon->spmi->dev.of_node,
 				"qcom,s3-debounce", &s3_debounce);
@@ -1648,6 +1826,21 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 		return rc;
 	}
 
+#if defined(CONFIG_CLR_KPDPWR_RESET_BATT_RMV) || \
+	defined(CONFIG_POWER_KEY_CLR_RESET)
+	if (get_radio_flag() & BIT(3)) {
+		qpnp_config_reset_enable(PON_KPDPWR, 0);
+		usleep(100);
+		qpnp_config_reset_ctrl(PON_KPDPWR, PON_S1_TIMER_MS_1352, PON_S2_TIMER_S_1, PON_WARM_RESET);
+		qpnp_config_reset_enable(PON_KPDPWR, 1);
+	} else {
+		qpnp_config_reset_enable(PON_KPDPWR, 0);
+		usleep(100);
+		qpnp_config_reset_ctrl(PON_KPDPWR, PON_S1_TIMER_MS_1352, PON_S2_TIMER_S_1, PON_DVDD_HARD_RESET);
+		qpnp_config_reset_enable(PON_KPDPWR, 1);
+	}
+	sw_mistouch_ctrl(1);
+#endif
 	dev_set_drvdata(&spmi->dev, pon);
 
 	INIT_DELAYED_WORK(&pon->bark_work, bark_work_func);

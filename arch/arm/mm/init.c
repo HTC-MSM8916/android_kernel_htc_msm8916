@@ -36,6 +36,12 @@
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+#ifdef CONFIG_MSM_KGSL
+#include <linux/msm_kgsl.h>
+#endif
+#ifdef CONFIG_ION
+#include <linux/msm_ion.h>
+#endif
 
 #include "mm.h"
 
@@ -99,6 +105,14 @@ void show_mem(unsigned int filter)
 	int shared = 0, cached = 0, slab = 0;
 	struct memblock_region *reg;
 
+#ifdef CONFIG_MSM_KGSL
+	unsigned long kgsl_alloc = kgsl_get_alloc_size(true);
+#endif
+#ifdef CONFIG_ION
+	uintptr_t ion_alloc = msm_ion_heap_meminfo(true);
+	uintptr_t ion_inuse = msm_ion_heap_meminfo(false);
+#endif
+
 	printk("Mem-info:\n");
 	show_free_areas(filter);
 
@@ -144,6 +158,13 @@ void show_mem(unsigned int filter)
 	printk("%d slab pages\n", slab);
 	printk("%d pages shared\n", shared);
 	printk("%d pages swap cached\n", cached);
+#ifdef CONFIG_MSM_KGSL
+	printk("KGSL_ALLOC: %8lu kB\n", kgsl_alloc >> 10);
+#endif
+#ifdef CONFIG_ION
+	printk("ION_TOTAL: %8lu kB\n", ion_alloc >> 10);
+	printk("ION_INUSE: %8lu kB\n", ion_inuse >> 10);
+#endif
 }
 
 static void __init find_limits(unsigned long *min, unsigned long *max_low,

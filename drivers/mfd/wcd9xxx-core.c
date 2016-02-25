@@ -2164,6 +2164,11 @@ static int wcd9xxx_i2c_probe(struct i2c_client *client,
 				"board file\n", __func__);
 			pdata = client->dev.platform_data;
 		}
+		if (!pdata) {
+			dev_dbg(&client->dev, "no platform data?\n");
+			goto fail;
+		}
+
 		wcd9xxx = kzalloc(sizeof(struct wcd9xxx), GFP_KERNEL);
 		if (wcd9xxx == NULL) {
 			pr_err("%s: error, allocation failed\n", __func__);
@@ -2171,10 +2176,11 @@ static int wcd9xxx_i2c_probe(struct i2c_client *client,
 			goto fail;
 		}
 
+		pdata = wcd9xxx_populate_dt_pdata(&client->dev);
 		if (!pdata) {
 			dev_dbg(&client->dev, "no platform data?\n");
 			ret = -EINVAL;
-			goto fail;
+			goto err_codec;
 		}
 		wcd9xxx->type = WCD9XXX;
 

@@ -474,4 +474,13 @@ struct snd_codec {
 	__u32 reserved[3];
 };
 
+#ifdef CONFIG_HTC_AUD_SRS_ENABLE
+struct dsp_effect_param {
+	uint32_t effect_type;
+	uint32_t module_id;
+	uint32_t param_id;
+	uint32_t payload_size;
+};
+#endif
+
 #endif

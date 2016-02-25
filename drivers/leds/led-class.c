@@ -85,12 +85,23 @@ static ssize_t led_max_brightness_show(struct device *dev,
 	return snprintf(buf, LED_BUFF_SIZE, "%u\n", led_cdev->max_brightness);
 }
 
+#ifdef CONFIG_LEDS_LED_BRIGHTNESS_LEVEL
+static ssize_t led_brightness_disable_level_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return snprintf(buf, LED_BUFF_SIZE, "1\n");
+}
+#endif
+
 static struct device_attribute led_class_attrs[] = {
 	__ATTR(brightness, 0644, led_brightness_show, led_brightness_store),
 	__ATTR(max_brightness, 0644, led_max_brightness_show,
 			led_max_brightness_store),
 #ifdef CONFIG_LEDS_TRIGGERS
 	__ATTR(trigger, 0644, led_trigger_show, led_trigger_store),
+#endif
+#ifdef CONFIG_LEDS_LED_BRIGHTNESS_LEVEL
+	__ATTR(brightness_disable_level, 0644, led_brightness_disable_level_show, NULL),
 #endif
 	__ATTR_NULL,
 };
